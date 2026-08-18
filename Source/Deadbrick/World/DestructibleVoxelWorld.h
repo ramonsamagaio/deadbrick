@@ -41,10 +41,8 @@ public:
     void EndBulkEdit();
 
 private:
-    UPROPERTY()
+    // These maps intentionally stay out of UPROPERTY reflection. They are runtime caches keyed by FIntVector.
     TMap<FIntVector, FDeadbrickVoxelChunk> Chunks;
-
-    UPROPERTY(Transient)
     TMap<FIntVector, TObjectPtr<UProceduralMeshComponent>> ChunkMeshes;
 
     TSet<FIntVector> DirtyChunks;
