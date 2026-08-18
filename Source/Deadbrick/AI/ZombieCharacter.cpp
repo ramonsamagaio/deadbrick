@@ -1,13 +1,11 @@
 #include "AI/ZombieCharacter.h"
-#include "AIController.h"
-#include "Blueprint/AIBlueprintHelperLibrary.h"
+#include "AI/ZombieDirectorSubsystem.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
 AZombieCharacter::AZombieCharacter()
 {
     PrimaryActorTick.bCanEverTick = true;
-    AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
     GetCharacterMovement()->MaxWalkSpeed = 230.0f;
 }
 
@@ -19,14 +17,30 @@ void AZombieCharacter::BeginPlay()
 
 void AZombieCharacter::AcquireTarget()
 {
+    CurrentTarget.Reset();
+    bHasMoveTarget = false;
+
     ACharacter* Player = UGameplayStatics::GetPlayerCharacter(this, 0);
-    if (Player && FVector::DistSquared(Player->GetActorLocation(), GetActorLocation()) <= FMath::Square(DetectionRadiusCm))
+    if (Player && FVector::DistSquared(Player->GetActorLocation(), GetActorLocation()) <= FMath::Square(VisualDetectionRadiusCm))
     {
         CurrentTarget = Player;
+        MoveTarget = Player->GetActorLocation();
+        bHasMoveTarget = true;
+        return;
     }
-    else
+
+    if (GetWorld())
     {
-        CurrentTarget.Reset();
+        if (UDeadbrickZombieDirectorSubsystem* Director = GetWorld()->GetSubsystem<UDeadbrickZombieDirectorSubsystem>())
+        {
+            float Score = 0.0f;
+            FVector NoiseLocation = FVector::ZeroVector;
+            if (Director->FindStrongestNoise(GetActorLocation(), HearingRadiusCm, NoiseLocation, Score))
+            {
+                MoveTarget = NoiseLocation;
+                bHasMoveTarget = true;
+            }
+        }
     }
 }
 
@@ -38,21 +52,37 @@ void AZombieCharacter::Tick(float DeltaSeconds)
 
     if (RetargetTimer <= 0.0f)
     {
-        RetargetTimer = 0.35f;
+        RetargetTimer = 0.25f;
         AcquireTarget();
     }
 
-    if (!CurrentTarget.IsValid()) return;
-
-    const float Distance = FVector::Dist(CurrentTarget->GetActorLocation(), GetActorLocation());
-    if (Distance > AttackDistanceCm)
+    if (CurrentTarget.IsValid())
     {
-        UAIBlueprintHelperLibrary::SimpleMoveToActor(GetController(), CurrentTarget.Get());
+        MoveTarget = CurrentTarget->GetActorLocation();
+        bHasMoveTarget = true;
     }
-    else if (AttackTimer <= 0.0f)
+
+    if (!bHasMoveTarget) return;
+
+    const FVector Delta = MoveTarget - GetActorLocation();
+    const float Distance = Delta.Size2D();
+    if (CurrentTarget.IsValid() && Distance <= AttackDistanceCm)
     {
-        AttackTimer = AttackCooldown;
-        UGameplayStatics::ApplyDamage(CurrentTarget.Get(), AttackDamage, GetController(), this, nullptr);
+        if (AttackTimer <= 0.0f)
+        {
+            AttackTimer = AttackCooldown;
+            UGameplayStatics::ApplyDamage(CurrentTarget.Get(), AttackDamage, GetController(), this, nullptr);
+        }
+        return;
+    }
+
+    if (Distance > 30.0f)
+    {
+        AddMovementInput(Delta.GetSafeNormal2D(), 1.0f);
+    }
+    else if (!CurrentTarget.IsValid())
+    {
+        bHasMoveTarget = false;
     }
 }
 

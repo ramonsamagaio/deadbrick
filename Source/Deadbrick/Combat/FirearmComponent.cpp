@@ -1,6 +1,6 @@
 #include "Combat/FirearmComponent.h"
 #include "World/DestructibleVoxelWorld.h"
-#include "AI/ZombieCharacter.h"
+#include "AI/ZombieDirectorSubsystem.h"
 #include "Kismet/GameplayStatics.h"
 
 UFirearmComponent::UFirearmComponent()
@@ -18,6 +18,11 @@ bool UFirearmComponent::FireFromCamera(const FVector& Origin, const FVector& Dir
 
     LastShotTime = Now;
     --AmmoInMagazine;
+
+    if (UDeadbrickZombieDirectorSubsystem* Director = GetWorld()->GetSubsystem<UDeadbrickZombieDirectorSubsystem>())
+    {
+        Director->ReportNoise(Origin, Stats.NoiseRadiusCm, Stats.NoiseIntensity, 4.0f);
+    }
 
     FHitResult Hit;
     FCollisionQueryParams Params(SCENE_QUERY_STAT(DeadbrickFirearm), true, GetOwner());

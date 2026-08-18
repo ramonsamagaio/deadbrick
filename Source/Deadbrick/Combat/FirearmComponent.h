@@ -15,6 +15,8 @@ struct FDeadbrickFirearmStats
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float RangeCm = 12000.0f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float RoundsPerMinute = 600.0f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 MagazineSize = 30;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) float NoiseRadiusCm = 7000.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) float NoiseIntensity = 1.0f;
 };
 
 UCLASS(ClassGroup=(Combat), meta=(BlueprintSpawnableComponent))

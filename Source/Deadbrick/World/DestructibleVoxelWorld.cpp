@@ -181,9 +181,11 @@ UProceduralMeshComponent* ADestructibleVoxelWorld::FindOrCreateChunkMesh(const F
     }
 
     UProceduralMeshComponent* Mesh = NewObject<UProceduralMeshComponent>(this);
+    AddInstanceComponent(Mesh);
     Mesh->RegisterComponent();
     Mesh->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
-    Mesh->SetRelativeLocation(FVector(ChunkCoord) * (ChunkSize * VoxelSizeCm));
+    Mesh->SetRelativeLocation(FVector((double)ChunkCoord.X, (double)ChunkCoord.Y, (double)ChunkCoord.Z) * (ChunkSize * VoxelSizeCm));
+    Mesh->bUseComplexAsSimpleCollision = true;
     Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     Mesh->SetCollisionObjectType(ECC_WorldStatic);
     Mesh->SetCollisionResponseToAllChannels(ECR_Block);

@@ -16,7 +16,8 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Zombie") float MaxHealth = 100.0f;
     UPROPERTY(BlueprintReadOnly, Category="Zombie") float Health = 100.0f;
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Zombie") float DetectionRadiusCm = 2800.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Zombie") float VisualDetectionRadiusCm = 2800.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Zombie") float HearingRadiusCm = 7000.0f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Zombie") float AttackDistanceCm = 130.0f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Zombie") float AttackDamage = 15.0f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Zombie") float AttackCooldown = 1.1f;
@@ -26,6 +27,8 @@ protected:
 
 private:
     TWeakObjectPtr<AActor> CurrentTarget;
+    FVector MoveTarget = FVector::ZeroVector;
+    bool bHasMoveTarget = false;
     float RetargetTimer = 0.0f;
     float AttackTimer = 0.0f;
     void AcquireTarget();
