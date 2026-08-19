@@ -9,8 +9,10 @@
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "Items/DeadbrickCraftingSubsystem.h"
 #include "Items/DeadbrickPickupItem.h"
 #include "Reference/ReferenceAssetResolver.h"
+#include "Save/DeadbrickSaveManagerSubsystem.h"
 #include "TimerManager.h"
 #include "World/ReferenceDestructibleProp.h"
 
@@ -72,6 +74,9 @@ void ADeadbrickCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
     PlayerInputComponent->BindAction("Interact", IE_Pressed, this, &ADeadbrickCharacter::Interact);
     PlayerInputComponent->BindAction("Sprint", IE_Pressed, this, &ADeadbrickCharacter::SprintPressed);
     PlayerInputComponent->BindAction("Sprint", IE_Released, this, &ADeadbrickCharacter::SprintReleased);
+    PlayerInputComponent->BindAction("QuickCraft", IE_Pressed, this, &ADeadbrickCharacter::QuickCraft);
+    PlayerInputComponent->BindAction("QuickSave", IE_Pressed, this, &ADeadbrickCharacter::QuickSave);
+    PlayerInputComponent->BindAction("QuickLoad", IE_Pressed, this, &ADeadbrickCharacter::QuickLoad);
 }
 
 float ADeadbrickCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
@@ -82,10 +87,7 @@ float ADeadbrickCharacter::TakeDamage(float DamageAmount, FDamageEvent const& Da
     Health = FMath::Clamp(Health - Applied, 0.0f, MaxHealth);
 
     if (GEngine)
-    {
-        GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Red,
-            FString::Printf(TEXT("Health %.0f / %.0f"), Health, MaxHealth));
-    }
+        GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Red, FString::Printf(TEXT("Health %.0f / %.0f"), Health, MaxHealth));
 
     if (Health <= 0.0f)
     {
@@ -124,9 +126,7 @@ void ADeadbrickCharacter::Fire()
 {
     if (bDead) return;
     if (FirstPersonCamera && Firearm)
-    {
         Firearm->FireFromCamera(FirstPersonCamera->GetComponentLocation(), FirstPersonCamera->GetForwardVector());
-    }
 }
 
 void ADeadbrickCharacter::Reload()
@@ -165,17 +165,36 @@ void ADeadbrickCharacter::Interact()
             {
                 const UEnum* Enum = StaticEnum<EDeadbrickItemType>();
                 const FString Name = Enum ? Enum->GetNameStringByValue((int64)Type) : TEXT("Item");
-                GEngine->AddOnScreenDebugMessage(-1, 2.5f, FColor::Cyan,
-                    FString::Printf(TEXT("Picked up %d x %s"), Quantity, *Name));
+                GEngine->AddOnScreenDebugMessage(-1, 2.5f, FColor::Cyan, FString::Printf(TEXT("Picked up %d x %s"), Quantity, *Name));
             }
         }
         return;
     }
 
     if (AReferenceDestructibleProp* Prop = Cast<AReferenceDestructibleProp>(Hit.GetActor()))
-    {
         Prop->Interact(this);
+}
+
+void ADeadbrickCharacter::QuickCraft()
+{
+    if (bDead || !GetWorld()) return;
+    if (UDeadbrickCraftingSubsystem* Crafting = GetWorld()->GetSubsystem<UDeadbrickCraftingSubsystem>())
+    {
+        // Temporary one-key test until the inventory/crafting UI lands. Uses both inventory and loose items nearby.
+        Crafting->TryCraft(this, EDeadbrickRecipe::MetalPlate, true);
     }
+}
+
+void ADeadbrickCharacter::QuickSave()
+{
+    if (GetWorld())
+        if (UDeadbrickSaveManagerSubsystem* SaveManager = GetWorld()->GetSubsystem<UDeadbrickSaveManagerSubsystem>()) SaveManager->SaveCurrentWorld();
+}
+
+void ADeadbrickCharacter::QuickLoad()
+{
+    if (GetWorld())
+        if (UDeadbrickSaveManagerSubsystem* SaveManager = GetWorld()->GetSubsystem<UDeadbrickSaveManagerSubsystem>()) SaveManager->LoadCurrentWorld();
 }
 
 int32 ADeadbrickCharacter::GetInventoryQuantity(EDeadbrickItemType ItemType) const
@@ -186,8 +205,7 @@ int32 ADeadbrickCharacter::GetInventoryQuantity(EDeadbrickItemType ItemType) con
 
 void ADeadbrickCharacter::AddInventoryItem(EDeadbrickItemType ItemType, int32 Quantity)
 {
-    if (Quantity <= 0) return;
-    Inventory.FindOrAdd(ItemType) += Quantity;
+    if (Quantity > 0) Inventory.FindOrAdd(ItemType) += Quantity;
 }
 
 bool ADeadbrickCharacter::ConsumeInventoryItem(EDeadbrickItemType ItemType, int32 Quantity)
@@ -204,8 +222,7 @@ void ADeadbrickCharacter::TryApplyReferenceVisuals()
 {
     FString MeshPath;
     USkeletalMesh* ReferenceMesh = DeadbrickReferenceAssets::FindSkeletalMesh(
-        {TEXT("player"), TEXT("maincharacter"), TEXT("character"), TEXT("human"), TEXT("male"), TEXT("female")},
-        &MeshPath);
+        {TEXT("player"), TEXT("maincharacter"), TEXT("character"), TEXT("human"), TEXT("male"), TEXT("female")}, &MeshPath);
 
     if (!ReferenceMesh || !GetMesh())
     {
@@ -220,18 +237,14 @@ void ADeadbrickCharacter::TryApplyReferenceVisuals()
     GetMesh()->SetCastHiddenShadow(true);
 
     USkeleton* Skeleton = ReferenceMesh->GetSkeleton();
-    IdleAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(
-        Skeleton, {TEXT("idle"), TEXT("stand"), TEXT("breath")});
-    WalkAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(
-        Skeleton, {TEXT("walk"), TEXT("run"), TEXT("locomotion")});
-
+    IdleAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(Skeleton, {TEXT("idle"), TEXT("stand"), TEXT("breath")});
+    WalkAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(Skeleton, {TEXT("walk"), TEXT("run"), TEXT("locomotion")});
     UE_LOG(LogTemp, Display, TEXT("DEADBRICK player reference visual bound: %s"), *MeshPath);
 }
 
 void ADeadbrickCharacter::UpdateReferenceAnimation()
 {
     if (!GetMesh()) return;
-
     UAnimSequence* Desired = GetVelocity().SizeSquared2D() > FMath::Square(15.0f) ? WalkAnimation : IdleAnimation;
     if (!Desired || Desired == CurrentAnimation) return;
 
@@ -244,7 +257,6 @@ void ADeadbrickCharacter::UpdateReferenceAnimation()
 void ADeadbrickCharacter::RecoverFromFall()
 {
     if (!bHasSafeSpawn || bDead) return;
-
     if (GetActorLocation().Z < SafeSpawnLocation.Z - 2200.0f)
     {
         GetCharacterMovement()->StopMovementImmediately();
@@ -262,6 +274,5 @@ void ADeadbrickCharacter::RespawnAtSafeLocation()
     GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
     GetCharacterMovement()->StopMovementImmediately();
     SetActorLocationAndRotation(SafeSpawnLocation, SafeSpawnRotation, false, nullptr, ETeleportType::TeleportPhysics);
-
     if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, TEXT("Respawned"));
 }
