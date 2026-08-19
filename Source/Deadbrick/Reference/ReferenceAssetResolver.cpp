@@ -6,6 +6,7 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
+#include "Materials/MaterialInterface.h"
 #include "Modules/ModuleManager.h"
 
 namespace
@@ -154,4 +155,16 @@ UStaticMesh* DeadbrickReferenceAssets::FindStaticMesh(const TArray<FString>& Pre
     if (OutObjectPath) *OutObjectPath = Mesh->GetPathName();
     UE_LOG(LogTemp, Display, TEXT("DEADBRICK reference static mesh: %s"), *Mesh->GetPathName());
     return Mesh;
+}
+
+UMaterialInterface* DeadbrickReferenceAssets::FindMaterial(const TArray<FString>& PreferredKeywords, FString* OutObjectPath)
+{
+    TArray<UMaterialInterface*> Materials = LoadRankedAssets<UMaterialInterface>(
+        UMaterialInterface::StaticClass()->GetClassPathName(), PreferredKeywords, 1);
+    if (Materials.Num() == 0) return nullptr;
+
+    UMaterialInterface* Material = Materials[0];
+    if (OutObjectPath) *OutObjectPath = Material->GetPathName();
+    UE_LOG(LogTemp, Display, TEXT("DEADBRICK reference material: %s"), *Material->GetPathName());
+    return Material;
 }
