@@ -35,7 +35,7 @@ void AReferenceDestructibleProp::InitializeFromReference(
     VoxelWorld = InVoxelWorld;
     BreakMaterial = InBreakMaterial;
     Health = FMath::Max(1.0f, InHealth);
-    Role = InRole;
+    ReferencePropRole = InRole;
     ClosedRotation = GetActorRotation();
 
     const FVector SafeDimensions(
@@ -59,7 +59,7 @@ bool AReferenceDestructibleProp::Interact(ADeadbrickCharacter* Player)
 {
     if (!Player) return false;
 
-    if (Role == EDeadbrickReferencePropRole::Door)
+    if (ReferencePropRole == EDeadbrickReferencePropRole::Door)
     {
         bOpen = !bOpen;
         const FRotator Target = bOpen
@@ -69,7 +69,7 @@ bool AReferenceDestructibleProp::Interact(ADeadbrickCharacter* Player)
         return true;
     }
 
-    if (Role == EDeadbrickReferencePropRole::Container)
+    if (ReferencePropRole == EDeadbrickReferencePropRole::Container)
     {
         if (!bLooted)
         {
@@ -88,7 +88,7 @@ float AReferenceDestructibleProp::TakeDamage(float DamageAmount, FDamageEvent co
     Health -= Applied;
     if (Health <= 0.0f)
     {
-        if (Role == EDeadbrickReferencePropRole::Container && !bLooted)
+        if (ReferencePropRole == EDeadbrickReferencePropRole::Container && !bLooted)
         {
             SpawnContainerLoot();
             bLooted = true;
