@@ -47,10 +47,15 @@ void ADeadbrickCharacter::BeginPlay()
 {
     Super::BeginPlay();
     Health = MaxHealth;
-    SafeSpawnLocation = GetActorLocation();
-    SafeSpawnRotation = GetActorRotation();
-    bHasSafeSpawn = true;
+    SetSafeSpawnTransform(GetActorLocation(), GetActorRotation());
     TryApplyReferenceVisuals();
+}
+
+void ADeadbrickCharacter::SetSafeSpawnTransform(const FVector& Location, const FRotator& Rotation)
+{
+    SafeSpawnLocation = Location;
+    SafeSpawnRotation = Rotation;
+    bHasSafeSpawn = true;
 }
 
 void ADeadbrickCharacter::Tick(float DeltaSeconds)
@@ -179,10 +184,7 @@ void ADeadbrickCharacter::QuickCraft()
 {
     if (bDead || !GetWorld()) return;
     if (UDeadbrickCraftingSubsystem* Crafting = GetWorld()->GetSubsystem<UDeadbrickCraftingSubsystem>())
-    {
-        // Temporary one-key test until the inventory/crafting UI lands. Uses both inventory and loose items nearby.
         Crafting->TryCraft(this, EDeadbrickRecipe::MetalPlate, true);
-    }
 }
 
 void ADeadbrickCharacter::QuickSave()
@@ -274,5 +276,6 @@ void ADeadbrickCharacter::RespawnAtSafeLocation()
     GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
     GetCharacterMovement()->StopMovementImmediately();
     SetActorLocationAndRotation(SafeSpawnLocation, SafeSpawnRotation, false, nullptr, ETeleportType::TeleportPhysics);
+    if (Controller) Controller->SetControlRotation(SafeSpawnRotation);
     if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, TEXT("Respawned"));
 }
