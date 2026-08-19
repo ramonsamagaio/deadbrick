@@ -62,6 +62,7 @@ public:
     void ApplyRuntimeEdits(const TArray<FDeadbrickVoxelEditRecord>& Edits);
 
     bool GetVoxel(const FIntVector& Voxel, FDeadbrickVoxel& OutVoxel) const;
+    UMaterialInterface* GetSurfaceMaterialForVoxel(EDeadbrickVoxelMaterial Material) { return ResolveSurfaceMaterial(Material); }
     void BeginBulkEdit();
     void EndBulkEdit();
 
