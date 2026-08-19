@@ -1,4 +1,14 @@
 #include "Deadbrick.h"
 #include "Modules/ModuleManager.h"
 
-IMPLEMENT_PRIMARY_GAME_MODULE(FDefaultGameModuleImpl, Deadbrick, "Deadbrick");
+class FDeadbrickGameModule final : public FDefaultGameModuleImpl
+{
+public:
+    virtual void StartupModule() override
+    {
+        FDefaultGameModuleImpl::StartupModule();
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK MODULE BUILD 2026-08-19-B LOADED"));
+    }
+};
+
+IMPLEMENT_PRIMARY_GAME_MODULE(FDeadbrickGameModule, Deadbrick, "Deadbrick");
