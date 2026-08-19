@@ -11,6 +11,8 @@
 #include "GameFramework/Controller.h"
 #include "Items/DeadbrickPickupItem.h"
 #include "Reference/ReferenceAssetResolver.h"
+#include "TimerManager.h"
+#include "World/ReferenceDestructibleProp.h"
 
 ADeadbrickCharacter::ADeadbrickCharacter()
 {
@@ -42,6 +44,7 @@ ADeadbrickCharacter::ADeadbrickCharacter()
 void ADeadbrickCharacter::BeginPlay()
 {
     Super::BeginPlay();
+    Health = MaxHealth;
     SafeSpawnLocation = GetActorLocation();
     SafeSpawnRotation = GetActorRotation();
     bHasSafeSpawn = true;
@@ -71,16 +74,45 @@ void ADeadbrickCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
     PlayerInputComponent->BindAction("Sprint", IE_Released, this, &ADeadbrickCharacter::SprintReleased);
 }
 
+float ADeadbrickCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
+{
+    if (bDead) return 0.0f;
+
+    const float Applied = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+    Health = FMath::Clamp(Health - Applied, 0.0f, MaxHealth);
+
+    if (GEngine)
+    {
+        GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Red,
+            FString::Printf(TEXT("Health %.0f / %.0f"), Health, MaxHealth));
+    }
+
+    if (Health <= 0.0f)
+    {
+        bDead = true;
+        GetCharacterMovement()->StopMovementImmediately();
+        GetCharacterMovement()->DisableMovement();
+        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Red, TEXT("YOU DIED"));
+
+        if (GetWorld())
+        {
+            FTimerHandle RespawnTimer;
+            GetWorld()->GetTimerManager().SetTimer(RespawnTimer, this, &ADeadbrickCharacter::RespawnAtSafeLocation, 2.0f, false);
+        }
+    }
+    return Applied;
+}
+
 void ADeadbrickCharacter::MoveForward(float Value)
 {
-    if (FMath::IsNearlyZero(Value) || !Controller) return;
+    if (bDead || FMath::IsNearlyZero(Value) || !Controller) return;
     const FRotator YawRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
     AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X), Value);
 }
 
 void ADeadbrickCharacter::MoveRight(float Value)
 {
-    if (FMath::IsNearlyZero(Value) || !Controller) return;
+    if (bDead || FMath::IsNearlyZero(Value) || !Controller) return;
     const FRotator YawRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
     AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y), Value);
 }
@@ -90,6 +122,7 @@ void ADeadbrickCharacter::LookPitch(float Value) { AddControllerPitchInput(Value
 
 void ADeadbrickCharacter::Fire()
 {
+    if (bDead) return;
     if (FirstPersonCamera && Firearm)
     {
         Firearm->FireFromCamera(FirstPersonCamera->GetComponentLocation(), FirstPersonCamera->GetForwardVector());
@@ -98,12 +131,12 @@ void ADeadbrickCharacter::Fire()
 
 void ADeadbrickCharacter::Reload()
 {
-    if (Firearm) Firearm->Reload();
+    if (!bDead && Firearm) Firearm->Reload();
 }
 
 void ADeadbrickCharacter::SprintPressed()
 {
-    if (GetCharacterMovement()) GetCharacterMovement()->MaxWalkSpeed = SprintSpeed;
+    if (!bDead && GetCharacterMovement()) GetCharacterMovement()->MaxWalkSpeed = SprintSpeed;
 }
 
 void ADeadbrickCharacter::SprintReleased()
@@ -113,7 +146,7 @@ void ADeadbrickCharacter::SprintReleased()
 
 void ADeadbrickCharacter::Interact()
 {
-    if (!GetWorld() || !FirstPersonCamera) return;
+    if (bDead || !GetWorld() || !FirstPersonCamera) return;
 
     const FVector Start = FirstPersonCamera->GetComponentLocation();
     const FVector End = Start + FirstPersonCamera->GetForwardVector() * 320.0f;
@@ -121,19 +154,27 @@ void ADeadbrickCharacter::Interact()
     FCollisionQueryParams Params(SCENE_QUERY_STAT(DeadbrickInteract), false, this);
     if (!GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params)) return;
 
-    ADeadbrickPickupItem* Pickup = Cast<ADeadbrickPickupItem>(Hit.GetActor());
-    if (!Pickup) return;
-
-    EDeadbrickItemType Type;
-    const int32 Quantity = Pickup->Collect(Type);
-    if (Quantity <= 0) return;
-
-    Inventory.FindOrAdd(Type) += Quantity;
-    if (GEngine)
+    if (ADeadbrickPickupItem* Pickup = Cast<ADeadbrickPickupItem>(Hit.GetActor()))
     {
-        const UEnum* Enum = StaticEnum<EDeadbrickItemType>();
-        const FString Name = Enum ? Enum->GetNameStringByValue((int64)Type) : TEXT("Item");
-        GEngine->AddOnScreenDebugMessage(-1, 2.5f, FColor::Cyan, FString::Printf(TEXT("Picked up %d x %s"), Quantity, *Name));
+        EDeadbrickItemType Type;
+        const int32 Quantity = Pickup->Collect(Type);
+        if (Quantity > 0)
+        {
+            AddInventoryItem(Type, Quantity);
+            if (GEngine)
+            {
+                const UEnum* Enum = StaticEnum<EDeadbrickItemType>();
+                const FString Name = Enum ? Enum->GetNameStringByValue((int64)Type) : TEXT("Item");
+                GEngine->AddOnScreenDebugMessage(-1, 2.5f, FColor::Cyan,
+                    FString::Printf(TEXT("Picked up %d x %s"), Quantity, *Name));
+            }
+        }
+        return;
+    }
+
+    if (AReferenceDestructibleProp* Prop = Cast<AReferenceDestructibleProp>(Hit.GetActor()))
+    {
+        Prop->Interact(this);
     }
 }
 
@@ -141,6 +182,22 @@ int32 ADeadbrickCharacter::GetInventoryQuantity(EDeadbrickItemType ItemType) con
 {
     if (const int32* Found = Inventory.Find(ItemType)) return *Found;
     return 0;
+}
+
+void ADeadbrickCharacter::AddInventoryItem(EDeadbrickItemType ItemType, int32 Quantity)
+{
+    if (Quantity <= 0) return;
+    Inventory.FindOrAdd(ItemType) += Quantity;
+}
+
+bool ADeadbrickCharacter::ConsumeInventoryItem(EDeadbrickItemType ItemType, int32 Quantity)
+{
+    if (Quantity <= 0) return true;
+    int32* Found = Inventory.Find(ItemType);
+    if (!Found || *Found < Quantity) return false;
+    *Found -= Quantity;
+    if (*Found <= 0) Inventory.Remove(ItemType);
+    return true;
 }
 
 void ADeadbrickCharacter::TryApplyReferenceVisuals()
@@ -186,11 +243,25 @@ void ADeadbrickCharacter::UpdateReferenceAnimation()
 
 void ADeadbrickCharacter::RecoverFromFall()
 {
-    if (!bHasSafeSpawn) return;
+    if (!bHasSafeSpawn || bDead) return;
 
     if (GetActorLocation().Z < SafeSpawnLocation.Z - 2200.0f)
     {
         GetCharacterMovement()->StopMovementImmediately();
         SetActorLocationAndRotation(SafeSpawnLocation, SafeSpawnRotation, false, nullptr, ETeleportType::TeleportPhysics);
     }
+}
+
+void ADeadbrickCharacter::RespawnAtSafeLocation()
+{
+    if (!bHasSafeSpawn) return;
+
+    bDead = false;
+    Health = MaxHealth;
+    GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+    GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+    GetCharacterMovement()->StopMovementImmediately();
+    SetActorLocationAndRotation(SafeSpawnLocation, SafeSpawnRotation, false, nullptr, ETeleportType::TeleportPhysics);
+
+    if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, TEXT("Respawned"));
 }
