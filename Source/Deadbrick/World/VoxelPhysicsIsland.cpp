@@ -1,6 +1,7 @@
 #include "World/VoxelPhysicsIsland.h"
 
 #include "Materials/MaterialInterface.h"
+#include "Physics/DeadbrickPhysXSubsystem.h"
 #include "ProceduralMeshComponent.h"
 #include "World/DestructibleVoxelWorld.h"
 
@@ -46,6 +47,18 @@ AVoxelPhysicsIsland::AVoxelPhysicsIsland()
     MeshComponent->SetCanEverAffectNavigation(false);
     MeshComponent->SetLinearDamping(0.08f);
     MeshComponent->SetAngularDamping(0.25f);
+}
+
+void AVoxelPhysicsIsland::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    if (PhysXBodyHandle != INDEX_NONE && GetWorld())
+    {
+        if (UDeadbrickPhysXSubsystem* PhysX = GetWorld()->GetSubsystem<UDeadbrickPhysXSubsystem>())
+            PhysX->DestroyBody(PhysXBodyHandle);
+    }
+    PhysXBodyHandle = INDEX_NONE;
+    bUsingPhysX = false;
+    Super::EndPlay(EndPlayReason);
 }
 
 void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWorld, const TArray<FIntVector>& Voxels, bool bStartSimulating)
@@ -145,20 +158,21 @@ void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWo
             false);
 
         if (UMaterialInterface* Material = SourceWorld->GetSurfaceMaterialForVoxel((EDeadbrickVoxelMaterial)MaterialIndex))
-        {
             MeshComponent->SetMaterial(SectionIndex, Material);
-        }
         ++SectionIndex;
     }
 
     if (AllVertices.Num() > 0)
     {
-        // One convex macro hull per prepared voxel group keeps the solver body count and contact graph tiny.
-        // The visual mesh can still contain thousands of voxels while physics sees only eight hull vertices.
         FBox LocalBounds(EForceInit::ForceInit);
         for (const FVector& Vertex : AllVertices) LocalBounds += Vertex;
         const FVector Min = LocalBounds.Min;
         const FVector Max = LocalBounds.Max;
+        PreparedLocalCenter = LocalBounds.GetCenter();
+        PreparedHalfExtents = LocalBounds.GetExtent().ComponentMax(FVector(0.5f));
+
+        // UE keeps a query-only convex proxy so CharacterMovement, bullets and interaction traces can
+        // still see moving rubble. It does not solve this body's rigid-body physics when PhysX is active.
         TArray<FVector> Convex;
         Convex.Reserve(8);
         Convex.Add(FVector(Min.X, Min.Y, Min.Z));
@@ -183,6 +197,41 @@ void AVoxelPhysicsIsland::ActivatePhysics()
     if (!bPreparedForPhysics || !MeshComponent) return;
 
     SetActorHiddenInGame(false);
+
+    if (GetWorld())
+    {
+        if (UDeadbrickPhysXSubsystem* PhysX = GetWorld()->GetSubsystem<UDeadbrickPhysXSubsystem>())
+        {
+            if (PhysX->IsPhysXReady())
+            {
+                MeshComponent->SetSimulatePhysics(false);
+                MeshComponent->SetEnableGravity(false);
+                MeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+
+                PhysXBodyHandle = PhysX->CreateDynamicBox(
+                    this,
+                    PreparedLocalCenter,
+                    PreparedHalfExtents,
+                    PreparedMassKg,
+                    0.08f,
+                    0.25f);
+
+                if (PhysXBodyHandle != INDEX_NONE)
+                {
+                    bUsingPhysX = true;
+                    UE_LOG(LogTemp, VeryVerbose,
+                        TEXT("DEADBRICK voxel island activated in PhysX5 | mass=%.1f kg | halfExtent=%s"),
+                        PreparedMassKg,
+                        *PreparedHalfExtents.ToCompactString());
+                    return;
+                }
+            }
+        }
+    }
+
+    // Compatibility fallback only. The normal rebuild script installs PhysX before compiling, so a
+    // correctly prepared DEADBRICK checkout should not take this branch.
+    bUsingPhysX = false;
     MeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     MeshComponent->SetUseCCD(true, NAME_None);
     MeshComponent->SetMaxDepenetrationVelocity(NAME_None, 1000.0f);
@@ -190,4 +239,5 @@ void AVoxelPhysicsIsland::ActivatePhysics()
     MeshComponent->SetEnableGravity(true);
     MeshComponent->SetMassOverrideInKg(NAME_None, PreparedMassKg, true);
     MeshComponent->WakeAllRigidBodies();
+    UE_LOG(LogTemp, Warning, TEXT("DEADBRICK voxel island fell back to Chaos because PhysX5 was unavailable."));
 }
