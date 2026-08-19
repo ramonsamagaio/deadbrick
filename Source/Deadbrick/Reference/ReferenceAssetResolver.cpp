@@ -63,7 +63,7 @@ namespace
         FAssetRegistryModule& RegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
         TArray<FString> Paths;
         Paths.Add(TEXT("/Game"));
-        RegistryModule.Get().ScanPathsSynchronous(Paths, true);
+        RegistryModule.Get().ScanPathsSynchronous(Paths, true, false);
     }
 
     void GetAssetsByClass(const FTopLevelAssetPath& ClassPath, TArray<FAssetData>& OutAssets)
@@ -165,8 +165,6 @@ namespace
             }
         }
 
-        // Cooked packages copied from another project do not always get indexed by the editor's
-        // Asset Registry. Fall back to explicit /Game object paths derived directly from .uasset files.
         for (TObjectType* Loaded : LoadFilesystemAssets<TObjectType>(Keywords, MaxResults))
         {
             Result.AddUnique(Loaded);
@@ -180,9 +178,6 @@ bool DeadbrickReferenceAssets::HasCookedReferenceAssets()
 {
     EnsureFilesystemIndex();
 
-    // The DEADBRICK source project itself currently has very few native .uasset files. A large
-    // Content index means the local LayOfTheLand cooked payload was installed even if AssetRegistry
-    // has not indexed it yet. The actual Find* calls still verify whether individual packages load.
     if (FilesystemObjectPaths.Num() > 100) return true;
 
     TArray<FAssetData> SkeletalMeshes;
