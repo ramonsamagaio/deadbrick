@@ -6,6 +6,7 @@ set "PROJECT=%PROJECT_DIR%DEADBRICK.uproject"
 set "ENGINE_DIR=C:\Program Files\Epic Games\UE_5.8"
 set "BUILD_BAT=%ENGINE_DIR%\Engine\Build\BatchFiles\Build.bat"
 set "EDITOR_EXE=%ENGINE_DIR%\Engine\Binaries\Win64\UnrealEditor.exe"
+set "CLEAN_SCRIPT=%PROJECT_DIR%CLEAN_INVALID_REFERENCE_CONTENT.ps1"
 
 echo ============================================================
 echo DEADBRICK - clean rebuild for Unreal Engine 5.8
@@ -33,6 +34,20 @@ if not errorlevel 1 (
     echo Close Unreal completely, then run this BAT again.
     pause
     exit /b 1
+)
+
+if exist "%CLEAN_SCRIPT%" (
+    echo Validating project Content before build...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%CLEAN_SCRIPT%"
+    if errorlevel 2 (
+        echo.
+        echo ============================================================
+        echo CONTENT VALIDATION FOUND A TRACKED INVALID PACKAGE.
+        echo Nothing tracked was deleted. Send Nyra the lines above.
+        echo ============================================================
+        pause
+        exit /b 2
+    )
 )
 
 echo Removing stale compiled binaries and generated files...
