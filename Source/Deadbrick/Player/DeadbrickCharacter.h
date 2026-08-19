@@ -66,6 +66,9 @@ private:
     void Interact();
     void SprintPressed();
     void SprintReleased();
+    void QuickCraft();
+    void QuickSave();
+    void QuickLoad();
     void TryApplyReferenceVisuals();
     void UpdateReferenceAnimation();
     void RecoverFromFall();
