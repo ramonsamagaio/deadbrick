@@ -26,8 +26,6 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics")
     bool bEnableStructuralGravity = true;
 
-    // Structural connectivity is processed incrementally. Large connected/anchored structures are
-    // deliberately never converted wholesale into physics in a single gameplay frame.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="512", ClampMax="65536"))
     int32 MaxStructuralScanVoxels = 8192;
 
@@ -43,8 +41,8 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="1", ClampMax="16"))
     int32 ChunkRebuildBudgetPerFrame = 2;
 
-    // Kept only so old editor instances/default objects do not lose a serialized property. The
-    // support-capacity heuristic is no longer used; structural state is anchor connectivity based.
+    // Retained only for serialized compatibility with the previous prototype. It is no longer used
+    // to decide collapse; structural state is based on anchor connectivity.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics")
     float SupportCapacityPerGroundVoxel = 384.0f;
 
@@ -66,8 +64,6 @@ public:
     UFUNCTION(BlueprintCallable, Category="Voxel")
     int32 ApplySphereDamage(const FVector& WorldCenter, float RadiusCm, float Damage);
 
-    // Compatibility entry point for explosions/tools. This now queues a connectivity query instead
-    // of blocking the game thread with a full structural scan.
     UFUNCTION(BlueprintCallable, Category="Voxel|Physics")
     void EvaluateStructuralGravity(const FVector& WorldCenter, float RadiusCm = 650.0f);
 
@@ -113,6 +109,7 @@ private:
     TMap<FIntVector, FDeadbrickVoxel> RuntimeEdits;
     bool bRecordRuntimeEdits = false;
     bool bDeferRuntimeChunkRebuilds = false;
+    bool bAsyncChunkCookingConfigured = false;
 
     TSet<FIntVector> DirtyChunks;
     int32 BulkEditDepth = 0;
