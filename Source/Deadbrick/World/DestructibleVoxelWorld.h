@@ -21,6 +21,15 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voxel")
     int32 ChunkSize = 32;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics")
+    bool bEnableStructuralGravity = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="64", ClampMax="16384"))
+    int32 MaxStructuralScanVoxels = 4096;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="8", ClampMax="2048"))
+    int32 MaxPhysicsIslandVoxels = 512;
+
     UFUNCTION(BlueprintCallable, Category="Voxel")
     FIntVector WorldToVoxel(const FVector& WorldPosition) const;
 
@@ -41,7 +50,6 @@ public:
     void EndBulkEdit();
 
 private:
-    // These maps intentionally stay out of UPROPERTY reflection. They are runtime caches keyed by FIntVector.
     TMap<FIntVector, FDeadbrickVoxelChunk> Chunks;
     TMap<FIntVector, TObjectPtr<UProceduralMeshComponent>> ChunkMeshes;
 
@@ -58,4 +66,5 @@ private:
     void MarkDirty(const FIntVector& ChunkCoord);
     void RebuildChunk(const FIntVector& ChunkCoord);
     uint8 DefaultIntegrityFor(EDeadbrickVoxelMaterial Material) const;
+    void ResolveStructuralGravityNear(const FVector& WorldCenter, float RadiusCm);
 };
