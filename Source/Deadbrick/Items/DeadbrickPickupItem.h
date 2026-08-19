@@ -27,6 +27,9 @@ public:
     void InitializeFromVoxelMaterial(EDeadbrickVoxelMaterial Material, int32 InQuantity);
 
     UFUNCTION(BlueprintCallable, Category="Item")
+    void InitializeItem(EDeadbrickItemType InType, int32 InQuantity);
+
+    UFUNCTION(BlueprintCallable, Category="Item")
     int32 Collect(EDeadbrickItemType& OutType);
 
 private:
@@ -35,4 +38,6 @@ private:
 
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<UStaticMeshComponent> MeshComponent;
+
+    void ApplyVisualForItemType();
 };
