@@ -30,6 +30,18 @@ struct FDeadbrickVoxel
     bool IsSolid() const { return Material != EDeadbrickVoxelMaterial::Air; }
 };
 
+USTRUCT(BlueprintType)
+struct FDeadbrickVoxelEditRecord
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FIntVector Coord = FIntVector::ZeroValue;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FDeadbrickVoxel Voxel;
+};
+
 USTRUCT()
 struct FDeadbrickVoxelChunk
 {
