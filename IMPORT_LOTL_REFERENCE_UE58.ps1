@@ -6,7 +6,6 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProjectContent = Join-Path $ProjectRoot "Content"
 $UE58 = "C:\Program Files\Epic Games\UE_5.8"
 $UnrealPak = Join-Path $UE58 "Engine\Binaries\Win64\UnrealPak.exe"
 $StageRoot = Join-Path $ProjectRoot "ReferenceExtracted"
@@ -19,13 +18,13 @@ $RetocExe = Join-Path $ToolsDir "retoc.exe"
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " DEADBRICK - LayOfTheLand reference importer (UE 5.8)" -ForegroundColor Cyan
-Write-Host " IoStore -> retoc legacy assets -> DEADBRICK Content" -ForegroundColor Cyan
+Write-Host " DEADBRICK - LayOfTheLand reference extractor (UE 5.8)" -ForegroundColor Cyan
+Write-Host " IoStore -> retoc legacy reference packages (isolated)" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
 if (Get-Process UnrealEditor -ErrorAction SilentlyContinue) {
-    Write-Host "UnrealEditor.exe is still running. Close it before importing reference content." -ForegroundColor Red
+    Write-Host "UnrealEditor.exe is still running. Close it before extracting reference content." -ForegroundColor Red
     exit 10
 }
 
@@ -89,7 +88,7 @@ if (-not $PakDir) {
 }
 
 Write-Host "Pak directory: $PakDir" -ForegroundColor Green
-New-Item -ItemType Directory -Path $StageRoot,$Stage,$LegacyDir,$LogDir,$ToolsDir,$ProjectContent -Force | Out-Null
+New-Item -ItemType Directory -Path $StageRoot,$Stage,$LegacyDir,$LogDir,$ToolsDir -Force | Out-Null
 
 function Ensure-Retoc {
     if (Test-Path $RetocExe) { return }
@@ -130,7 +129,7 @@ if (Test-Path $Stage) { Remove-Item $Stage -Recurse -Force }
 New-Item -ItemType Directory -Path $Stage -Force | Out-Null
 
 Write-Host ""
-Write-Host "[1/5] Converting IoStore/Zen packages to legacy .uasset/.uexp..." -ForegroundColor Cyan
+Write-Host "[1/5] Converting IoStore/Zen packages to a legacy reference pak..." -ForegroundColor Cyan
 & $RetocExe to-legacy $PakDir $LegacyPak 2>&1 | Tee-Object -FilePath $RetocLog | Out-Host
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $LegacyPak)) {
     Write-Host "retoc failed to create the legacy package." -ForegroundColor Red
@@ -143,15 +142,15 @@ Write-Host "[2/5] Listing converted packages..." -ForegroundColor Cyan
 & $UnrealPak $LegacyPak -List 2>&1 | Tee-Object -FilePath $AssetListLog | Out-Host
 
 Write-Host ""
-Write-Host "[3/5] Extracting legacy Unreal packages..." -ForegroundColor Cyan
+Write-Host "[3/5] Extracting legacy cooked packages for inspection/export..." -ForegroundColor Cyan
 & $UnrealPak $LegacyPak "-Extract=$Stage" 2>&1 | Tee-Object -FilePath $ExtractLog | Out-Host
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Primary UnrealPak extract syntax failed; trying alternate syntax..." -ForegroundColor Yellow
     & $UnrealPak $LegacyPak -Extract $Stage 2>&1 | Tee-Object -FilePath $ExtractLog -Append | Out-Host
 }
 
-$Uassets = Get-ChildItem $Stage -Recurse -Filter "*.uasset" -File -ErrorAction SilentlyContinue
-if (-not $Uassets -or $Uassets.Count -eq 0) {
+$Uassets = @(Get-ChildItem $Stage -Recurse -Filter "*.uasset" -File -ErrorAction SilentlyContinue)
+if ($Uassets.Count -eq 0) {
     Write-Host "Conversion completed but no .uasset packages appeared after extraction." -ForegroundColor Red
     Write-Host "Send me these two small logs:" -ForegroundColor Yellow
     Write-Host "  ReferenceExtracted\Logs\retoc_to_legacy.txt" -ForegroundColor Yellow
@@ -159,71 +158,28 @@ if (-not $Uassets -or $Uassets.Count -eq 0) {
     exit 21
 }
 
-Write-Host "Recovered $($Uassets.Count) .uasset packages." -ForegroundColor Green
+Write-Host "Recovered $($Uassets.Count) cooked .uasset packages." -ForegroundColor Green
 
 Write-Host ""
-Write-Host "[4/5] Installing cooked reference assets locally into DEADBRICK Content..." -ForegroundColor Cyan
-$Extensions = @(".uasset", ".uexp", ".ubulk", ".uptnl")
-$Copied = 0
-$TopLevelEntries = New-Object 'System.Collections.Generic.HashSet[string]'
-$CookedFiles = Get-ChildItem $Stage -Recurse -File | Where-Object { $Extensions -contains $_.Extension.ToLowerInvariant() }
-
-foreach ($File in $CookedFiles) {
-    $Full = $File.FullName
-    $Normalized = $Full.Replace('/', '\')
-    $Marker = "\Content\"
-    $Index = $Normalized.IndexOf($Marker, [System.StringComparison]::OrdinalIgnoreCase)
-
-    if ($Index -ge 0) {
-        $Relative = $Normalized.Substring($Index + $Marker.Length)
-    } else {
-        $Relative = $Normalized.Substring($Stage.Length).TrimStart('\')
-        $Relative = $Relative -replace '^\.\.\\\.\.\\\.\.\\', ''
-        $Relative = $Relative -replace '^LayOfTheLand\\Content\\', ''
-        $Relative = $Relative -replace '^Game\\Content\\', ''
-    }
-
-    if ([string]::IsNullOrWhiteSpace($Relative)) { continue }
-    if ($Relative -match '^(Engine\\|Plugins\\)') { continue }
-
-    $Destination = Join-Path $ProjectContent $Relative
-    $DestinationDir = Split-Path -Parent $Destination
-    New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
-    Copy-Item $File.FullName $Destination -Force
-    $Copied++
-
-    $FirstSegment = ($Relative -split '[\\/]')[0]
-    if (-not [string]::IsNullOrWhiteSpace($FirstSegment)) { [void]$TopLevelEntries.Add($FirstSegment) }
-}
-
-$GitExclude = Join-Path $ProjectRoot ".git\info\exclude"
-if (Test-Path (Split-Path -Parent $GitExclude)) {
-    $Existing = if (Test-Path $GitExclude) { @(Get-Content $GitExclude) } else { @() }
-    foreach ($Entry in $TopLevelEntries) {
-        $Pattern = "/Content/$Entry/"
-        if ($Existing -notcontains $Pattern) {
-            Add-Content -Path $GitExclude -Value $Pattern
-            $Existing += $Pattern
-        }
-    }
-}
+Write-Host "[4/5] Keeping cooked packages OUTSIDE DEADBRICK Content..." -ForegroundColor Cyan
+Write-Host "Cooked game packages are not editor-native source assets." -ForegroundColor Yellow
+Write-Host "They stay isolated in ReferenceExtracted until converted/exported to normal editor formats." -ForegroundColor Yellow
+Write-Host "This prevents PACKAGE_FILE_TAG errors and broken materials/textures in Unreal Editor." -ForegroundColor Yellow
 
 $MarkerFile = Join-Path $ProjectRoot "Saved\LOTL_REFERENCE_IMPORT.txt"
 New-Item -ItemType Directory -Path (Split-Path -Parent $MarkerFile) -Force | Out-Null
 @(
-    "Imported: $(Get-Date -Format o)",
+    "Extracted: $(Get-Date -Format o)",
     "PakDir: $PakDir",
     "Retoc: $RetocExe",
     "LegacyPak: $LegacyPak",
-    "UassetsRecovered: $($Uassets.Count)",
-    "CookedFilesInstalled: $Copied",
+    "CookedUassetsRecovered: $($Uassets.Count)",
+    "InstalledIntoContent: False",
     "Stage: $Stage"
 ) | Set-Content $MarkerFile
 
-Write-Host "Installed $Copied cooked package files locally." -ForegroundColor Green
-
 Write-Host ""
-Write-Host "[5/5] Generating the precise asset manifest and rebuilding DEADBRICK..." -ForegroundColor Cyan
+Write-Host "[5/5] Generating the precise reference manifest and rebuilding DEADBRICK..." -ForegroundColor Cyan
 $ManifestScript = Join-Path $ProjectRoot "GENERATE_LOTL_MANIFEST.ps1"
 if (Test-Path $ManifestScript) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File $ManifestScript
