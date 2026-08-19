@@ -137,6 +137,10 @@ void ADestructibleVoxelWorld::EvaluateStructuralGravity(const FVector& WorldCent
         }
         if (Detached.Num() == 0) continue;
 
+        // Build the dynamic fragments while the source cells still exist, so the fragment mesh can
+        // read the original material of every voxel. Then remove the static cells from the world.
+        SpawnDetachedComponentAsPhysics(Detached);
+
         BeginBulkEdit();
         for (const FIntVector& Cell : Detached)
         {
@@ -145,7 +149,6 @@ void ADestructibleVoxelWorld::EvaluateStructuralGravity(const FVector& WorldCent
         EndBulkEdit();
 
         CollapsedVoxels += Detached.Num();
-        SpawnDetachedComponentAsPhysics(Detached);
 
         UE_LOG(LogTemp, Display,
             TEXT("DEADBRICK STRUCTURAL FAILURE: %d voxels detached at Z=%d (component=%d, ground=%s, scanLimit=%s)"),
