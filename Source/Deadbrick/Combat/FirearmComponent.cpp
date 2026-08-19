@@ -11,14 +11,14 @@ UFirearmComponent::UFirearmComponent()
 
 bool UFirearmComponent::FireFromCamera(const FVector& Origin, const FVector& Direction)
 {
-    if (!GetWorld() || AmmoInMagazine <= 0) return false;
+    if (!GetWorld() || (!bInfiniteAmmo && AmmoInMagazine <= 0)) return false;
 
     const double Now = GetWorld()->GetTimeSeconds();
     const double SecondsPerShot = 60.0 / FMath::Max(1.0f, Stats.RoundsPerMinute);
     if (Now - LastShotTime < SecondsPerShot) return false;
 
     LastShotTime = Now;
-    --AmmoInMagazine;
+    if (!bInfiniteAmmo) --AmmoInMagazine;
 
     if (UDeadbrickZombieDirectorSubsystem* Director = GetWorld()->GetSubsystem<UDeadbrickZombieDirectorSubsystem>())
     {
@@ -43,9 +43,8 @@ bool UFirearmComponent::FireFromCamera(const FVector& Origin, const FVector& Dir
     {
         const FVector DamagePoint = Hit.ImpactPoint - Hit.ImpactNormal * 2.0f;
 
-        // ApplySphereDamage now queues the structural connectivity work itself. The previous version
-        // immediately ran a second full structural scan here, so a single bullet could synchronously
-        // traverse/rebuild tens of thousands of voxels twice before returning to the frame.
+        // Damage is local and immediate. Structural connectivity is queued and budgeted by the voxel
+        // world instead of being traversed synchronously inside the shot that caused the edit.
         VoxelWorld->ApplySphereDamage(DamagePoint, Stats.VoxelDamageRadiusCm, Stats.VoxelDamage);
     }
     else if (AActor* HitActor = Hit.GetActor())
@@ -67,6 +66,12 @@ bool UFirearmComponent::FireFromCamera(const FVector& Origin, const FVector& Dir
 
 void UFirearmComponent::Reload()
 {
+    if (bInfiniteAmmo)
+    {
+        AmmoInMagazine = Stats.MagazineSize;
+        return;
+    }
+
     const int32 Missing = FMath::Max(0, Stats.MagazineSize - AmmoInMagazine);
     const int32 ToLoad = FMath::Min(Missing, ReserveAmmo);
     AmmoInMagazine += ToLoad;
