@@ -15,6 +15,21 @@ namespace
         TArray<FLinearColor> Colors;
         TArray<FProcMeshTangent> Tangents;
     };
+
+    float DensityKgPerM3(EDeadbrickVoxelMaterial Material)
+    {
+        switch (Material)
+        {
+            case EDeadbrickVoxelMaterial::Wood: return 700.0f;
+            case EDeadbrickVoxelMaterial::Brick: return 1800.0f;
+            case EDeadbrickVoxelMaterial::Concrete: return 2400.0f;
+            case EDeadbrickVoxelMaterial::Glass: return 2500.0f;
+            case EDeadbrickVoxelMaterial::Metal: return 7800.0f;
+            case EDeadbrickVoxelMaterial::Asphalt: return 2300.0f;
+            case EDeadbrickVoxelMaterial::Soil: return 1600.0f;
+            default: return 1000.0f;
+        }
+    }
 }
 
 AVoxelPhysicsIsland::AVoxelPhysicsIsland()
@@ -27,6 +42,8 @@ AVoxelPhysicsIsland::AVoxelPhysicsIsland()
     MeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     MeshComponent->SetCollisionObjectType(ECC_PhysicsBody);
     MeshComponent->SetCollisionResponseToAllChannels(ECR_Block);
+    MeshComponent->SetLinearDamping(0.08f);
+    MeshComponent->SetAngularDamping(0.25f);
 }
 
 void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWorld, const TArray<FIntVector>& Voxels)
@@ -34,6 +51,8 @@ void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWo
     if (!SourceWorld || Voxels.Num() == 0 || !MeshComponent) return;
 
     const float VoxelSize = SourceWorld->VoxelSizeCm;
+    const float VoxelSizeMeters = VoxelSize / 100.0f;
+    const float VoxelVolumeM3 = VoxelSizeMeters * VoxelSizeMeters * VoxelSizeMeters;
     const FVector Origin = SourceWorld->VoxelToWorld(Voxels[0]);
     SetActorLocation(Origin);
 
@@ -44,6 +63,7 @@ void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWo
     TArray<FIslandMeshBuffers> Buffers;
     Buffers.SetNum(8);
     TArray<FVector> AllVertices;
+    float EstimatedMassKg = 0.0f;
 
     const FIntVector Directions[6] =
     {
@@ -89,6 +109,8 @@ void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWo
         const int32 MaterialIndex = (int32)SourceVoxel.Material;
         if (!Buffers.IsValidIndex(MaterialIndex) || MaterialIndex <= 0) continue;
 
+        EstimatedMassKg += DensityKgPerM3(SourceVoxel.Material) * VoxelVolumeM3;
+
         FIslandMeshBuffers& Buffer = Buffers[MaterialIndex];
         const FVector Center = SourceWorld->VoxelToWorld(Cell) - Origin;
         for (int32 Face = 0; Face < 6; ++Face)
@@ -121,8 +143,6 @@ void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWo
         ++SectionIndex;
     }
 
-    // Chaos cannot simulate a movable body using a complex triangle mesh as its only collision shape.
-    // A local convex hull keeps each detached microvoxel cluster physical without creating one body per voxel.
     if (AllVertices.Num() > 0)
     {
         FBox LocalBounds(EForceInit::ForceInit);
@@ -144,5 +164,6 @@ void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWo
 
     MeshComponent->SetSimulatePhysics(true);
     MeshComponent->SetEnableGravity(true);
+    MeshComponent->SetMassOverrideInKg(NAME_None, FMath::Clamp(EstimatedMassKg, 1.0f, 250000.0f), true);
     MeshComponent->WakeAllRigidBodies();
 }
