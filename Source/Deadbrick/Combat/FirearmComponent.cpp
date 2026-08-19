@@ -33,7 +33,14 @@ bool UFirearmComponent::FireFromCamera(const FVector& Origin, const FVector& Dir
 
     if (ADestructibleVoxelWorld* VoxelWorld = Cast<ADestructibleVoxelWorld>(Hit.GetActor()))
     {
-        VoxelWorld->ApplySphereDamage(Hit.ImpactPoint - Hit.ImpactNormal * 2.0f, Stats.VoxelDamageRadiusCm, Stats.VoxelDamage);
+        const FVector DamagePoint = Hit.ImpactPoint - Hit.ImpactNormal * 2.0f;
+        const int32 Destroyed = VoxelWorld->ApplySphereDamage(DamagePoint, Stats.VoxelDamageRadiusCm, Stats.VoxelDamage);
+        if (Destroyed > 0 && VoxelWorld->bEnableStructuralGravity)
+        {
+            // Search several metres around the impact so removing a ground-floor support can detach
+            // the floor/roof above even when the newly unsupported cells are not inside the bullet crater.
+            VoxelWorld->EvaluateStructuralGravity(DamagePoint, FMath::Max(650.0f, Stats.VoxelDamageRadiusCm * 14.0f));
+        }
     }
     else if (AActor* HitActor = Hit.GetActor())
     {
