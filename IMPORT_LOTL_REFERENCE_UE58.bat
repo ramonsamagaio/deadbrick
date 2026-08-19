@@ -7,23 +7,24 @@ echo DEADBRICK - import LayOfTheLand reference content
 echo Close Unreal Editor before continuing.
 echo.
 
-set "AUTO_LOTL=C:\Program Files (x86)\Steam\steamapps\common\Lay of the Land\LayOfTheLand\Content\Paks"
+REM Keep all Steam-path detection inside PowerShell. CMD can misparse
+REM parentheses in paths such as C:\Program Files (x86) when expanded
+REM inside parenthesized IF blocks.
+if "%~1"=="" goto AUTO
 
-if not "%~1"=="" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0IMPORT_LOTL_REFERENCE_UE58.ps1" -ReferenceRoot "%~1"
-) else if exist "%AUTO_LOTL%\pakchunk0-Windows.utoc" (
-    echo Found Steam reference automatically:
-    echo %AUTO_LOTL%
-    echo.
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0IMPORT_LOTL_REFERENCE_UE58.ps1" -ReferenceRoot "%AUTO_LOTL%"
-) else (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0IMPORT_LOTL_REFERENCE_UE58.ps1"
-)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0IMPORT_LOTL_REFERENCE_UE58.ps1" -ReferenceRoot "%~1"
+goto DONE
 
+:AUTO
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0IMPORT_LOTL_REFERENCE_UE58.ps1"
+
+:DONE
 set EXITCODE=%ERRORLEVEL%
-if not "%EXITCODE%"=="0" (
-    echo.
-    echo Import finished with error code %EXITCODE%.
-    pause
-)
+if "%EXITCODE%"=="0" goto END
+
+echo.
+echo Import finished with error code %EXITCODE%.
+pause
+
+:END
 exit /b %EXITCODE%
