@@ -1,5 +1,6 @@
 #include "World/DestructibleVoxelWorld.h"
 #include "World/VoxelPhysicsIsland.h"
+#include "Items/DeadbrickPickupItem.h"
 #include "ProceduralMeshComponent.h"
 #include "Components/SceneComponent.h"
 #include "Engine/CollisionProfile.h"
@@ -147,6 +148,7 @@ int32 ADestructibleVoxelWorld::ApplySphereDamage(const FVector& WorldCenter, flo
     const FIntVector Center = WorldToVoxel(WorldCenter);
     const int32 RadiusVoxels = FMath::CeilToInt(RadiusCm / VoxelSizeCm);
     int32 Destroyed = 0;
+    TMap<EDeadbrickVoxelMaterial, int32> DestroyedByMaterial;
 
     BeginBulkEdit();
     for (int32 Z = -RadiusVoxels; Z <= RadiusVoxels; ++Z)
@@ -164,6 +166,7 @@ int32 ADestructibleVoxelWorld::ApplySphereDamage(const FVector& WorldCenter, flo
         const int32 EffectiveDamage = FMath::RoundToInt(Damage * (0.35f + 0.65f * Falloff));
         if (EffectiveDamage >= Existing.Integrity)
         {
+            DestroyedByMaterial.FindOrAdd(Existing.Material) += 1;
             SetVoxel(Coord, EDeadbrickVoxelMaterial::Air, 0);
             ++Destroyed;
         }
@@ -174,11 +177,39 @@ int32 ADestructibleVoxelWorld::ApplySphereDamage(const FVector& WorldCenter, flo
     }
     EndBulkEdit();
 
+    if (Destroyed > 0 && bSpawnSalvageDrops)
+    {
+        SpawnSalvageDrops(WorldCenter, DestroyedByMaterial);
+    }
+
     if (Destroyed > 0 && bEnableStructuralGravity)
     {
         ResolveStructuralGravityNear(WorldCenter, FMath::Max(RadiusCm * 4.0f, VoxelSizeCm * 8.0f));
     }
     return Destroyed;
+}
+
+void ADestructibleVoxelWorld::SpawnSalvageDrops(const FVector& WorldCenter, const TMap<EDeadbrickVoxelMaterial, int32>& DestroyedByMaterial)
+{
+    if (!GetWorld()) return;
+
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+    for (const TPair<EDeadbrickVoxelMaterial, int32>& Pair : DestroyedByMaterial)
+    {
+        if (Pair.Key == EDeadbrickVoxelMaterial::Air || Pair.Value <= 0) continue;
+
+        // Aggregate microvoxels into one physical item stack per material. The reference game treats
+        // matter as useful physical loot; this keeps that behavior without spawning one rigid body per voxel.
+        const int32 Quantity = FMath::Max(1, FMath::CeilToInt(Pair.Value / 3.0f));
+        const FVector Offset(FMath::FRandRange(-18.0f, 18.0f), FMath::FRandRange(-18.0f, 18.0f), FMath::FRandRange(20.0f, 55.0f));
+        if (ADeadbrickPickupItem* Pickup = GetWorld()->SpawnActor<ADeadbrickPickupItem>(
+            ADeadbrickPickupItem::StaticClass(), WorldCenter + Offset, FRotator::ZeroRotator, SpawnParams))
+        {
+            Pickup->InitializeFromVoxelMaterial(Pair.Key, Quantity);
+        }
+    }
 }
 
 void ADestructibleVoxelWorld::ResolveStructuralGravityNear(const FVector& WorldCenter, float RadiusCm)
@@ -253,8 +284,6 @@ void ADestructibleVoxelWorld::ResolveStructuralGravityNear(const FVector& WorldC
             continue;
         }
 
-        // This connected group lost every structural path to the ground. Remove it from the static voxel
-        // database and re-home the exact voxel cells as one simulated physics island.
         BeginBulkEdit();
         for (const FIntVector& Cell : Component)
         {
@@ -264,7 +293,8 @@ void ADestructibleVoxelWorld::ResolveStructuralGravityNear(const FVector& WorldC
 
         FActorSpawnParameters SpawnParams;
         SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-        if (AVoxelPhysicsIsland* Island = GetWorld()->SpawnActor<AVoxelPhysicsIsland>(AVoxelPhysicsIsland::StaticClass(), FTransform::Identity, SpawnParams))
+        if (AVoxelPhysicsIsland* Island = GetWorld()->SpawnActor<AVoxelPhysicsIsland>(
+            AVoxelPhysicsIsland::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams))
         {
             Island->InitializeFromVoxels(this, Component);
         }
