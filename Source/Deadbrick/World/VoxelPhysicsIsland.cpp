@@ -91,7 +91,7 @@ void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWo
         const FVector V3 = FaceCenter + (-AxisA + AxisB) * H;
         Buffer.Vertices.Append({V0, V1, V2, V3});
         AllVertices.Append({V0, V1, V2, V3});
-        Buffer.Triangles.Append({Base, Base + 1, Base + 2, Base, Base + 2, Base + 3});
+        Buffer.Triangles.Append({Base, Base + 2, Base + 1, Base, Base + 3, Base + 2});
         for (int32 I = 0; I < 4; ++I)
         {
             Buffer.Normals.Add(N);
