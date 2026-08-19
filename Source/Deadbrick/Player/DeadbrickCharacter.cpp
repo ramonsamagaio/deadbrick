@@ -4,8 +4,11 @@
 #include "Camera/CameraComponent.h"
 #include "Combat/FirearmComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -14,6 +17,7 @@
 #include "Reference/ReferenceAssetResolver.h"
 #include "Save/DeadbrickSaveManagerSubsystem.h"
 #include "TimerManager.h"
+#include "UObject/ConstructorHelpers.h"
 #include "World/ReferenceDestructibleProp.h"
 
 ADeadbrickCharacter::ADeadbrickCharacter()
@@ -26,6 +30,50 @@ ADeadbrickCharacter::ADeadbrickCharacter()
     FirstPersonCamera->bUsePawnControlRotation = true;
     FirstPersonCamera->SetFieldOfView(90.0f);
 
+    ViewModelRoot = CreateDefaultSubobject<USceneComponent>(TEXT("ViewModelRoot"));
+    ViewModelRoot->SetupAttachment(FirstPersonCamera);
+
+    FirstPersonArms = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("FirstPersonArms"));
+    FirstPersonArms->SetupAttachment(ViewModelRoot);
+    FirstPersonArms->SetOnlyOwnerSee(true);
+    FirstPersonArms->SetCastShadow(false);
+    FirstPersonArms->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    ViewWeapon = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ViewWeapon"));
+    ViewWeapon->SetupAttachment(ViewModelRoot);
+    ViewWeapon->SetOnlyOwnerSee(true);
+    ViewWeapon->SetCastShadow(false);
+    ViewWeapon->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    ViewWeapon->SetRelativeLocation(FVector(48.0f, 13.0f, -21.0f));
+    ViewWeapon->SetRelativeRotation(FRotator(0.0f, 0.0f, 0.0f));
+    ViewWeapon->SetRelativeScale3D(FVector(0.42f, 0.065f, 0.07f));
+
+    FallbackRightArm = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("FallbackRightArm"));
+    FallbackRightArm->SetupAttachment(ViewModelRoot);
+    FallbackRightArm->SetOnlyOwnerSee(true);
+    FallbackRightArm->SetCastShadow(false);
+    FallbackRightArm->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    FallbackRightArm->SetRelativeLocation(FVector(30.0f, 18.0f, -31.0f));
+    FallbackRightArm->SetRelativeRotation(FRotator(-8.0f, -5.0f, 0.0f));
+    FallbackRightArm->SetRelativeScale3D(FVector(0.28f, 0.055f, 0.065f));
+
+    FallbackLeftArm = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("FallbackLeftArm"));
+    FallbackLeftArm->SetupAttachment(ViewModelRoot);
+    FallbackLeftArm->SetOnlyOwnerSee(true);
+    FallbackLeftArm->SetCastShadow(false);
+    FallbackLeftArm->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    FallbackLeftArm->SetRelativeLocation(FVector(31.0f, -10.0f, -29.0f));
+    FallbackLeftArm->SetRelativeRotation(FRotator(-10.0f, 8.0f, 0.0f));
+    FallbackLeftArm->SetRelativeScale3D(FVector(0.25f, 0.05f, 0.06f));
+
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
+    if (CubeMesh.Succeeded())
+    {
+        ViewWeapon->SetStaticMesh(CubeMesh.Object);
+        FallbackRightArm->SetStaticMesh(CubeMesh.Object);
+        FallbackLeftArm->SetStaticMesh(CubeMesh.Object);
+    }
+
     Firearm = CreateDefaultSubobject<UFirearmComponent>(TEXT("Firearm"));
 
     bUseControllerRotationPitch = false;
@@ -35,12 +83,20 @@ ADeadbrickCharacter::ADeadbrickCharacter()
     UCharacterMovementComponent* Movement = GetCharacterMovement();
     Movement->bOrientRotationToMovement = false;
     Movement->MaxWalkSpeed = WalkSpeed;
-    Movement->MaxAcceleration = 2600.0f;
-    Movement->BrakingDecelerationWalking = 2400.0f;
-    Movement->GroundFriction = 8.0f;
-    Movement->BrakingFrictionFactor = 2.0f;
-    Movement->AirControl = 0.25f;
-    Movement->GravityScale = 1.0f;
+    Movement->MaxAcceleration = 4200.0f;
+    Movement->BrakingDecelerationWalking = 5200.0f;
+    Movement->GroundFriction = 12.0f;
+    Movement->bUseSeparateBrakingFriction = true;
+    Movement->BrakingFriction = 12.0f;
+    Movement->BrakingFrictionFactor = 1.0f;
+    Movement->BrakingSubStepTime = 1.0f / 60.0f;
+    Movement->MinAnalogWalkSpeed = 0.0f;
+    Movement->MaxStepHeight = 45.0f;
+    Movement->bUseFlatBaseForFloorChecks = true;
+    Movement->AirControl = 0.12f;
+    Movement->FallingLateralFriction = 0.05f;
+    Movement->GravityScale = 1.35f;
+    Movement->JumpZVelocity = 430.0f;
 }
 
 void ADeadbrickCharacter::BeginPlay()
@@ -61,6 +117,7 @@ void ADeadbrickCharacter::SetSafeSpawnTransform(const FVector& Location, const F
 void ADeadbrickCharacter::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
+    UpdateGroundBraking();
     RecoverFromFall();
     UpdateReferenceAnimation();
 }
@@ -112,16 +169,18 @@ float ADeadbrickCharacter::TakeDamage(float DamageAmount, FDamageEvent const& Da
 
 void ADeadbrickCharacter::MoveForward(float Value)
 {
-    if (bDead || FMath::IsNearlyZero(Value) || !Controller) return;
+    ForwardInput = FMath::Abs(Value) < 0.01f ? 0.0f : Value;
+    if (bDead || ForwardInput == 0.0f || !Controller) return;
     const FRotator YawRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
-    AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X), Value);
+    AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X), ForwardInput);
 }
 
 void ADeadbrickCharacter::MoveRight(float Value)
 {
-    if (bDead || FMath::IsNearlyZero(Value) || !Controller) return;
+    RightInput = FMath::Abs(Value) < 0.01f ? 0.0f : Value;
+    if (bDead || RightInput == 0.0f || !Controller) return;
     const FRotator YawRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
-    AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y), Value);
+    AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y), RightInput);
 }
 
 void ADeadbrickCharacter::LookYaw(float Value) { AddControllerYawInput(Value); }
@@ -226,22 +285,50 @@ void ADeadbrickCharacter::TryApplyReferenceVisuals()
     USkeletalMesh* ReferenceMesh = DeadbrickReferenceAssets::FindSkeletalMesh(
         {TEXT("player"), TEXT("maincharacter"), TEXT("character"), TEXT("human"), TEXT("male"), TEXT("female")}, &MeshPath);
 
-    if (!ReferenceMesh || !GetMesh())
+    if (ReferenceMesh && GetMesh())
     {
-        UE_LOG(LogTemp, Display, TEXT("DEADBRICK player: no compatible cooked reference mesh found; using FPS capsule until reference import succeeds."));
-        return;
+        GetMesh()->SetSkeletalMesh(ReferenceMesh);
+        GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -88.0f));
+        GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+        GetMesh()->SetOwnerNoSee(true);
+        GetMesh()->SetCastHiddenShadow(true);
+
+        USkeleton* Skeleton = ReferenceMesh->GetSkeleton();
+        IdleAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(Skeleton, {TEXT("idle"), TEXT("stand"), TEXT("breath")});
+        WalkAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(Skeleton, {TEXT("walk"), TEXT("run"), TEXT("locomotion")});
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK player reference visual bound: %s"), *MeshPath);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK player: no editor-valid reference body mesh yet; gameplay capsule remains authoritative."));
     }
 
-    GetMesh()->SetSkeletalMesh(ReferenceMesh);
-    GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -88.0f));
-    GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
-    GetMesh()->SetOwnerNoSee(true);
-    GetMesh()->SetCastHiddenShadow(true);
+    if (FirstPersonArms)
+    {
+        USkeletalMesh* ArmsMesh = DeadbrickReferenceAssets::FindSkeletalMesh(
+            {TEXT("firstperson"), TEXT("first_person"), TEXT("arms"), TEXT("hands"), TEXT("arm"), TEXT("hand")});
+        if (ArmsMesh)
+        {
+            FirstPersonArms->SetSkeletalMesh(ArmsMesh);
+            FirstPersonArms->SetRelativeLocation(FVector(10.0f, 0.0f, -32.0f));
+            FirstPersonArms->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+            FallbackLeftArm->SetVisibility(false, true);
+            FallbackRightArm->SetVisibility(false, true);
+            UE_LOG(LogTemp, Display, TEXT("DEADBRICK first-person arms bound: %s"), *ArmsMesh->GetPathName());
+        }
+    }
 
-    USkeleton* Skeleton = ReferenceMesh->GetSkeleton();
-    IdleAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(Skeleton, {TEXT("idle"), TEXT("stand"), TEXT("breath")});
-    WalkAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(Skeleton, {TEXT("walk"), TEXT("run"), TEXT("locomotion")});
-    UE_LOG(LogTemp, Display, TEXT("DEADBRICK player reference visual bound: %s"), *MeshPath);
+    if (ViewWeapon)
+    {
+        UStaticMesh* WeaponMesh = DeadbrickReferenceAssets::FindStaticMesh(
+            {TEXT("rifle"), TEXT("pistol"), TEXT("shotgun"), TEXT("gun"), TEXT("firearm"), TEXT("weapon")});
+        if (WeaponMesh)
+        {
+            ViewWeapon->SetStaticMesh(WeaponMesh);
+            ViewWeapon->SetRelativeScale3D(FVector(1.0f));
+            UE_LOG(LogTemp, Display, TEXT("DEADBRICK first-person weapon bound: %s"), *WeaponMesh->GetPathName());
+        }
+    }
 }
 
 void ADeadbrickCharacter::UpdateReferenceAnimation()
@@ -254,6 +341,23 @@ void ADeadbrickCharacter::UpdateReferenceAnimation()
     GetMesh()->SetAnimationMode(EAnimationMode::AnimationSingleNode);
     GetMesh()->SetAnimation(Desired);
     GetMesh()->Play(true);
+}
+
+void ADeadbrickCharacter::UpdateGroundBraking()
+{
+    UCharacterMovementComponent* Movement = GetCharacterMovement();
+    if (!Movement || !Movement->IsMovingOnGround()) return;
+
+    const bool bHasInput = FMath::Abs(ForwardInput) > 0.01f || FMath::Abs(RightInput) > 0.01f;
+    if (bHasInput) return;
+
+    FVector Velocity = Movement->Velocity;
+    if (Velocity.SizeSquared2D() <= FMath::Square(85.0f))
+    {
+        Velocity.X = 0.0f;
+        Velocity.Y = 0.0f;
+        Movement->Velocity = Velocity;
+    }
 }
 
 void ADeadbrickCharacter::RecoverFromFall()
@@ -272,6 +376,8 @@ void ADeadbrickCharacter::RespawnAtSafeLocation()
 
     bDead = false;
     Health = MaxHealth;
+    ForwardInput = 0.0f;
+    RightInput = 0.0f;
     GetCharacterMovement()->SetMovementMode(MOVE_Walking);
     GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
     GetCharacterMovement()->StopMovementImmediately();
