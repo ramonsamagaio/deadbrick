@@ -2,6 +2,8 @@ Binaries/
 DerivedDataCache/
 Intermediate/
 Saved/
+ReferenceExtracted/
+Tools/retoc/
 .vs/
 .vscode/
 *.VC.db
