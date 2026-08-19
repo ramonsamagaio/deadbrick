@@ -2,7 +2,6 @@
 
 #include "Items/DeadbrickPickupItem.h"
 #include "Reference/ReferenceAssetResolver.h"
-#include "World/VoxelPhysicsIsland.h"
 #include "Components/SceneComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/World.h"
@@ -24,7 +23,8 @@ namespace
 
 ADestructibleVoxelWorld::ADestructibleVoxelWorld()
 {
-    PrimaryActorTick.bCanEverTick = false;
+    PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.TickGroup = TG_PostPhysics;
     SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("Root")));
 }
 
@@ -141,6 +141,16 @@ void ADestructibleVoxelWorld::SetVoxel(const FIntVector& Voxel, EDeadbrickVoxelM
     Cell.Integrity = Material == EDeadbrickVoxelMaterial::Air ? 0 : (Integrity == 255 ? DefaultIntegrityFor(Material) : Integrity);
     if (bRecordRuntimeEdits) RuntimeEdits.Add(Voxel, Cell);
     MarkDirty(ChunkCoord);
+
+    // A face on a chunk seam belongs visually to both chunks. The old implementation rebuilt only
+    // the modified chunk, leaving stale hidden/exposed faces in its neighbour after destruction.
+    const FIntVector Local = ToLocalCoord(Voxel);
+    if (Local.X == 0)             { const FIntVector N = ChunkCoord + FIntVector(-1,0,0); if (Chunks.Contains(N)) MarkDirty(N); }
+    if (Local.X == ChunkSize - 1) { const FIntVector N = ChunkCoord + FIntVector( 1,0,0); if (Chunks.Contains(N)) MarkDirty(N); }
+    if (Local.Y == 0)             { const FIntVector N = ChunkCoord + FIntVector(0,-1,0); if (Chunks.Contains(N)) MarkDirty(N); }
+    if (Local.Y == ChunkSize - 1) { const FIntVector N = ChunkCoord + FIntVector(0, 1,0); if (Chunks.Contains(N)) MarkDirty(N); }
+    if (Local.Z == 0)             { const FIntVector N = ChunkCoord + FIntVector(0,0,-1); if (Chunks.Contains(N)) MarkDirty(N); }
+    if (Local.Z == ChunkSize - 1) { const FIntVector N = ChunkCoord + FIntVector(0,0, 1); if (Chunks.Contains(N)) MarkDirty(N); }
 }
 
 void ADestructibleVoxelWorld::FillBox(const FIntVector& MinVoxel, const FIntVector& MaxVoxel, EDeadbrickVoxelMaterial Material, uint8 Integrity)
@@ -157,6 +167,10 @@ void ADestructibleVoxelWorld::StartRuntimePersistence()
 {
     RuntimeEdits.Reset();
     bRecordRuntimeEdits = true;
+
+    // Generation has finished. From here on, gameplay edits are amortized instead of rebuilding every
+    // touched 32^3 chunk synchronously inside the input event that caused the edit.
+    bDeferRuntimeChunkRebuilds = true;
 }
 
 void ADestructibleVoxelWorld::ExportRuntimeEdits(TArray<FDeadbrickVoxelEditRecord>& OutEdits) const
@@ -186,35 +200,51 @@ void ADestructibleVoxelWorld::ApplyRuntimeEdits(const TArray<FDeadbrickVoxelEdit
     bRecordRuntimeEdits = bWasRecording || true;
 }
 
-void ADestructibleVoxelWorld::BeginBulkEdit() { ++BulkEditDepth; }
+void ADestructibleVoxelWorld::BeginBulkEdit()
+{
+    ++BulkEditDepth;
+}
 
 void ADestructibleVoxelWorld::EndBulkEdit()
 {
     BulkEditDepth = FMath::Max(0, BulkEditDepth - 1);
-    if (BulkEditDepth == 0)
-    {
-        const TArray<FIntVector> Pending = DirtyChunks.Array();
-        DirtyChunks.Reset();
-        for (const FIntVector& ChunkCoord : Pending) RebuildChunk(ChunkCoord);
-    }
+    if (BulkEditDepth != 0 || bDeferRuntimeChunkRebuilds) return;
+
+    const TArray<FIntVector> Pending = DirtyChunks.Array();
+    DirtyChunks.Reset();
+    for (const FIntVector& ChunkCoord : Pending) RebuildChunk(ChunkCoord);
 }
 
 void ADestructibleVoxelWorld::MarkDirty(const FIntVector& ChunkCoord)
 {
     DirtyChunks.Add(ChunkCoord);
-    if (BulkEditDepth == 0)
+    if (BulkEditDepth == 0 && !bDeferRuntimeChunkRebuilds)
     {
         RebuildChunk(ChunkCoord);
         DirtyChunks.Remove(ChunkCoord);
     }
 }
 
+void ADestructibleVoxelWorld::FlushDirtyChunkBudget()
+{
+    if (BulkEditDepth != 0 || DirtyChunks.Num() == 0) return;
+
+    const TArray<FIntVector> Pending = DirtyChunks.Array();
+    const int32 Count = FMath::Min(FMath::Max(1, ChunkRebuildBudgetPerFrame), Pending.Num());
+    for (int32 Index = 0; Index < Count; ++Index)
+    {
+        RebuildChunk(Pending[Index]);
+        DirtyChunks.Remove(Pending[Index]);
+    }
+}
+
 int32 ADestructibleVoxelWorld::ApplySphereDamage(const FVector& WorldCenter, float RadiusCm, float Damage)
 {
     const FIntVector Center = WorldToVoxel(WorldCenter);
-    const int32 RadiusVoxels = FMath::CeilToInt(RadiusCm / VoxelSizeCm);
+    const int32 RadiusVoxels = FMath::Max(1, FMath::CeilToInt(RadiusCm / VoxelSizeCm));
     int32 Destroyed = 0;
     TMap<EDeadbrickVoxelMaterial, int32> DestroyedByMaterial;
+    TArray<FIntVector> DestroyedCells;
 
     BeginBulkEdit();
     for (int32 Z = -RadiusVoxels; Z <= RadiusVoxels; ++Z)
@@ -233,6 +263,7 @@ int32 ADestructibleVoxelWorld::ApplySphereDamage(const FVector& WorldCenter, flo
         if (EffectiveDamage >= Existing.Integrity)
         {
             DestroyedByMaterial.FindOrAdd(Existing.Material) += 1;
+            DestroyedCells.Add(Coord);
             SetVoxel(Coord, EDeadbrickVoxelMaterial::Air, 0);
             ++Destroyed;
         }
@@ -244,8 +275,7 @@ int32 ADestructibleVoxelWorld::ApplySphereDamage(const FVector& WorldCenter, flo
     EndBulkEdit();
 
     if (Destroyed > 0 && bSpawnSalvageDrops) SpawnSalvageDrops(WorldCenter, DestroyedByMaterial);
-    if (Destroyed > 0 && bEnableStructuralGravity)
-        ResolveStructuralGravityNear(WorldCenter, FMath::Max(RadiusCm * 4.0f, VoxelSizeCm * 8.0f));
+    if (Destroyed > 0 && bEnableStructuralGravity) QueueStructuralCheckFromDestroyed(DestroyedCells);
     return Destroyed;
 }
 
@@ -264,85 +294,6 @@ void ADestructibleVoxelWorld::SpawnSalvageDrops(const FVector& WorldCenter, cons
             ADeadbrickPickupItem::StaticClass(), WorldCenter + Offset, FRotator::ZeroRotator, SpawnParams))
         {
             Pickup->InitializeFromVoxelMaterial(Pair.Key, Quantity);
-        }
-    }
-}
-
-void ADestructibleVoxelWorld::ResolveStructuralGravityNear(const FVector& WorldCenter, float RadiusCm)
-{
-    if (!GetWorld() || MaxStructuralScanVoxels <= 0 || MaxPhysicsIslandVoxels <= 0) return;
-
-    const FIntVector Center = WorldToVoxel(WorldCenter);
-    const int32 RadiusV = FMath::Clamp(FMath::CeilToInt(RadiusCm / VoxelSizeCm), 2, 64);
-    const FIntVector Directions[6] = {
-        FIntVector(1,0,0), FIntVector(-1,0,0), FIntVector(0,1,0),
-        FIntVector(0,-1,0), FIntVector(0,0,1), FIntVector(0,0,-1)
-    };
-
-    TSet<FIntVector> Visited;
-    const int32 CandidateRadiusSq = RadiusV * RadiusV;
-    for (int32 Z = -RadiusV; Z <= RadiusV; ++Z)
-    for (int32 Y = -RadiusV; Y <= RadiusV; ++Y)
-    for (int32 X = -RadiusV; X <= RadiusV; ++X)
-    {
-        if (X * X + Y * Y + Z * Z > CandidateRadiusSq) continue;
-        const FIntVector Start = Center + FIntVector(X, Y, Z);
-        if (Visited.Contains(Start)) continue;
-
-        FDeadbrickVoxel StartVoxel;
-        if (!GetVoxel(Start, StartVoxel)) continue;
-
-        TArray<FIntVector> Queue;
-        TArray<FIntVector> Component;
-        Queue.Reserve(FMath::Min(MaxStructuralScanVoxels, 1024));
-        Component.Reserve(FMath::Min(MaxPhysicsIslandVoxels, 512));
-        Queue.Add(Start);
-        Visited.Add(Start);
-        int32 ReadIndex = 0;
-        bool bGrounded = false;
-        bool bTooLarge = false;
-
-        while (ReadIndex < Queue.Num())
-        {
-            const FIntVector Current = Queue[ReadIndex++];
-            FDeadbrickVoxel CurrentVoxel;
-            if (!GetVoxel(Current, CurrentVoxel)) continue;
-            Component.Add(Current);
-
-            if (Current.Z <= 0 || CurrentVoxel.Material == EDeadbrickVoxelMaterial::Soil || CurrentVoxel.Material == EDeadbrickVoxelMaterial::Asphalt)
-            {
-                bGrounded = true;
-                break;
-            }
-            if (Component.Num() >= MaxStructuralScanVoxels)
-            {
-                bTooLarge = true;
-                break;
-            }
-
-            for (const FIntVector& Direction : Directions)
-            {
-                const FIntVector Neighbor = Current + Direction;
-                if (Visited.Contains(Neighbor)) continue;
-                FDeadbrickVoxel NeighborVoxel;
-                if (!GetVoxel(Neighbor, NeighborVoxel)) continue;
-                Visited.Add(Neighbor);
-                Queue.Add(Neighbor);
-            }
-        }
-
-        if (bGrounded || bTooLarge || Component.Num() == 0 || Component.Num() > MaxPhysicsIslandVoxels) continue;
-
-        BeginBulkEdit();
-        for (const FIntVector& Cell : Component) SetVoxel(Cell, EDeadbrickVoxelMaterial::Air, 0);
-        EndBulkEdit();
-
-        FActorSpawnParameters SpawnParams;
-        SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-        if (AVoxelPhysicsIsland* Island = GetWorld()->SpawnActor<AVoxelPhysicsIsland>(
-            AVoxelPhysicsIsland::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams))
-        {
-            Island->InitializeFromVoxels(this, Component);
         }
     }
 }
@@ -397,7 +348,10 @@ void ADestructibleVoxelWorld::RebuildChunk(const FIntVector& ChunkCoord)
         Buffer.Vertices.Add(FaceCenter + ( AxisA - AxisB) * H);
         Buffer.Vertices.Add(FaceCenter + ( AxisA + AxisB) * H);
         Buffer.Vertices.Add(FaceCenter + (-AxisA + AxisB) * H);
-        Buffer.Triangles.Append({Base, Base + 1, Base + 2, Base, Base + 2, Base + 3});
+
+        // UE/D3D front-face winding for this basis. The previous order rendered the generated shell
+        // from the wrong side, which is exactly the inside-out facade visible in the supplied video.
+        Buffer.Triangles.Append({Base, Base + 2, Base + 1, Base, Base + 3, Base + 2});
         for (int32 I = 0; I < 4; ++I)
         {
             Buffer.Normals.Add(N);
