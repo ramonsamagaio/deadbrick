@@ -1,7 +1,21 @@
 #include "World/VoxelPhysicsIsland.h"
 
+#include "Materials/MaterialInterface.h"
 #include "ProceduralMeshComponent.h"
 #include "World/DestructibleVoxelWorld.h"
+
+namespace
+{
+    struct FIslandMeshBuffers
+    {
+        TArray<FVector> Vertices;
+        TArray<int32> Triangles;
+        TArray<FVector> Normals;
+        TArray<FVector2D> UVs;
+        TArray<FLinearColor> Colors;
+        TArray<FProcMeshTangent> Tangents;
+    };
+}
 
 AVoxelPhysicsIsland::AVoxelPhysicsIsland()
 {
@@ -27,63 +41,92 @@ void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWo
     CellSet.Reserve(Voxels.Num());
     for (const FIntVector& Voxel : Voxels) CellSet.Add(Voxel);
 
-    TArray<FVector> Vertices;
-    TArray<int32> Triangles;
-    TArray<FVector> Normals;
-    TArray<FVector2D> UVs;
-    TArray<FLinearColor> Colors;
-    TArray<FProcMeshTangent> Tangents;
+    TArray<FIslandMeshBuffers> Buffers;
+    Buffers.SetNum(8);
+    TArray<FVector> AllVertices;
 
-    const FIntVector Directions[6] = {
+    const FIntVector Directions[6] =
+    {
         FIntVector(1,0,0), FIntVector(-1,0,0), FIntVector(0,1,0),
         FIntVector(0,-1,0), FIntVector(0,0,1), FIntVector(0,0,-1)
     };
-    const FVector FaceNormals[6] = {
+    const FVector FaceNormals[6] =
+    {
         FVector(1,0,0), FVector(-1,0,0), FVector(0,1,0),
         FVector(0,-1,0), FVector(0,0,1), FVector(0,0,-1)
     };
 
-    auto AddFace = [&](const FVector& Center, int32 Face)
+    auto AddFace = [&](FIslandMeshBuffers& Buffer, const FVector& Center, int32 Face)
     {
         const FVector N = FaceNormals[Face];
         const FVector AxisA = FMath::Abs(N.Z) > 0.5f ? FVector(1,0,0) : FVector(0,0,1);
         const FVector AxisB = FVector::CrossProduct(N, AxisA);
         const float H = VoxelSize * 0.5f;
         const FVector FaceCenter = Center + N * H;
-        const int32 Base = Vertices.Num();
+        const int32 Base = Buffer.Vertices.Num();
 
-        Vertices.Add(FaceCenter + (-AxisA - AxisB) * H);
-        Vertices.Add(FaceCenter + ( AxisA - AxisB) * H);
-        Vertices.Add(FaceCenter + ( AxisA + AxisB) * H);
-        Vertices.Add(FaceCenter + (-AxisA + AxisB) * H);
-
-        Triangles.Append({Base, Base + 1, Base + 2, Base, Base + 2, Base + 3});
+        const FVector V0 = FaceCenter + (-AxisA - AxisB) * H;
+        const FVector V1 = FaceCenter + ( AxisA - AxisB) * H;
+        const FVector V2 = FaceCenter + ( AxisA + AxisB) * H;
+        const FVector V3 = FaceCenter + (-AxisA + AxisB) * H;
+        Buffer.Vertices.Append({V0, V1, V2, V3});
+        AllVertices.Append({V0, V1, V2, V3});
+        Buffer.Triangles.Append({Base, Base + 1, Base + 2, Base, Base + 2, Base + 3});
         for (int32 I = 0; I < 4; ++I)
         {
-            Normals.Add(N);
-            Colors.Add(FLinearColor::White);
-            Tangents.Add(FProcMeshTangent(AxisA, false));
+            Buffer.Normals.Add(N);
+            Buffer.Colors.Add(FLinearColor::White);
+            Buffer.Tangents.Add(FProcMeshTangent(AxisA, false));
         }
-        UVs.Append({FVector2D(0,0), FVector2D(1,0), FVector2D(1,1), FVector2D(0,1)});
+        Buffer.UVs.Append({FVector2D(0,0), FVector2D(1,0), FVector2D(1,1), FVector2D(0,1)});
     };
 
     for (const FIntVector& Cell : Voxels)
     {
+        FDeadbrickVoxel SourceVoxel;
+        if (!SourceWorld->GetVoxel(Cell, SourceVoxel)) continue;
+
+        const int32 MaterialIndex = (int32)SourceVoxel.Material;
+        if (!Buffers.IsValidIndex(MaterialIndex) || MaterialIndex <= 0) continue;
+
+        FIslandMeshBuffers& Buffer = Buffers[MaterialIndex];
         const FVector Center = SourceWorld->VoxelToWorld(Cell) - Origin;
         for (int32 Face = 0; Face < 6; ++Face)
         {
-            if (!CellSet.Contains(Cell + Directions[Face])) AddFace(Center, Face);
+            if (!CellSet.Contains(Cell + Directions[Face])) AddFace(Buffer, Center, Face);
         }
     }
 
-    MeshComponent->CreateMeshSection_LinearColor(0, Vertices, Triangles, Normals, UVs, Colors, Tangents, false, false);
+    int32 SectionIndex = 0;
+    for (int32 MaterialIndex = 1; MaterialIndex < Buffers.Num(); ++MaterialIndex)
+    {
+        FIslandMeshBuffers& Buffer = Buffers[MaterialIndex];
+        if (Buffer.Vertices.Num() == 0) continue;
+
+        MeshComponent->CreateMeshSection_LinearColor(
+            SectionIndex,
+            Buffer.Vertices,
+            Buffer.Triangles,
+            Buffer.Normals,
+            Buffer.UVs,
+            Buffer.Colors,
+            Buffer.Tangents,
+            false,
+            false);
+
+        if (UMaterialInterface* Material = SourceWorld->GetSurfaceMaterialForVoxel((EDeadbrickVoxelMaterial)MaterialIndex))
+        {
+            MeshComponent->SetMaterial(SectionIndex, Material);
+        }
+        ++SectionIndex;
+    }
 
     // Chaos cannot simulate a movable body using a complex triangle mesh as its only collision shape.
-    // A bounded convex hull keeps detached voxel groups physical without turning every microvoxel into a rigid body.
-    if (Vertices.Num() > 0)
+    // A local convex hull keeps each detached microvoxel cluster physical without creating one body per voxel.
+    if (AllVertices.Num() > 0)
     {
         FBox LocalBounds(EForceInit::ForceInit);
-        for (const FVector& Vertex : Vertices) LocalBounds += Vertex;
+        for (const FVector& Vertex : AllVertices) LocalBounds += Vertex;
         const FVector Min = LocalBounds.Min;
         const FVector Max = LocalBounds.Max;
         TArray<FVector> Convex;
