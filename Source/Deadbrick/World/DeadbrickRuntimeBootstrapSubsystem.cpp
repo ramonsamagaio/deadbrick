@@ -20,14 +20,14 @@ void UDeadbrickRuntimeBootstrapSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
     Super::OnWorldBeginPlay(InWorld);
 
-    ShowStatus(TEXT("DEADBRICK bootstrap active: building voxel prototype..."), FColor::Yellow);
+    ShowStatus(TEXT("DEADBRICK: building procedural destructible urban test district..."), FColor::Yellow);
     if (DeadbrickReferenceAssets::HasCookedReferenceAssets())
     {
-        ShowStatus(TEXT("DEADBRICK reference content detected: LOTL meshes/animations will be auto-bound."), FColor::Cyan);
+        ShowStatus(TEXT("LOTL reference content detected: skins, animations, props and materials are being auto-bound."), FColor::Cyan);
     }
     else
     {
-        ShowStatus(TEXT("DEADBRICK reference content NOT imported yet: run IMPORT_LOTL_REFERENCE_UE58.bat once."), FColor::Orange);
+        ShowStatus(TEXT("LOTL reference packages are not readable yet: run IMPORT_LOTL_REFERENCE_UE58.bat."), FColor::Orange);
     }
 
     BuildPrototypeWorld();
@@ -40,10 +40,7 @@ void UDeadbrickRuntimeBootstrapSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
 {
     UWorld* World = GetWorld();
-    if (!World || RuntimeVoxelWorld.IsValid())
-    {
-        return;
-    }
+    if (!World || RuntimeVoxelWorld.IsValid()) return;
 
     FActorSpawnParameters SpawnParams;
     SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -60,6 +57,8 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
     RuntimeVoxelWorld = VoxelWorld;
     VoxelWorld->VoxelSizeCm = 20.0f;
     VoxelWorld->ChunkSize = 32;
+    VoxelWorld->bEnableStructuralGravity = true;
+    VoxelWorld->bSpawnSalvageDrops = true;
 
     AProceduralCityGenerator* CityGenerator = World->SpawnActor<AProceduralCityGenerator>(
         AProceduralCityGenerator::StaticClass(), PrototypeOrigin, FRotator::ZeroRotator, SpawnParams);
@@ -74,22 +73,19 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
     CityGenerator->VoxelWorld = VoxelWorld;
     CityGenerator->Seed = 1337;
     CityGenerator->BlocksPerAxis = 1;
-    CityGenerator->BlockSizeMeters = 18.0f;
+    CityGenerator->BlockSizeMeters = 24.0f;
     CityGenerator->StreetWidthMeters = 8.0f;
     CityGenerator->FloorHeightMeters = 3.0f;
     CityGenerator->GenerateCity();
 
     SpawnPrototypeZombies();
-    ShowStatus(TEXT("DEADBRICK voxel prototype generated. Buildings/roads are backed by destructible voxel cells."), FColor::Green);
+    ShowStatus(TEXT("Urban voxel district ready: roads, soil, floors, walls, rooms and stairs are destructible cells."), FColor::Green);
 }
 
 void UDeadbrickRuntimeBootstrapSubsystem::EnsurePlayer()
 {
     UWorld* World = GetWorld();
-    if (!World)
-    {
-        return;
-    }
+    if (!World) return;
 
     APlayerController* PC = UGameplayStatics::GetPlayerController(World, 0);
     if (!PC)
@@ -145,16 +141,13 @@ void UDeadbrickRuntimeBootstrapSubsystem::EnsurePlayer()
     PC->SetInputMode(FInputModeGameOnly());
     PC->bShowMouseCursor = false;
 
-    ShowStatus(TEXT("DEADBRICK ACTIVE | WASD + mouse | LMB destroys voxels | R reload | fall recovery ON"), FColor::Green);
+    ShowStatus(TEXT("WASD move | Shift sprint | Space jump | LMB shoot/destroy | R reload | E collect"), FColor::Green);
 }
 
 void UDeadbrickRuntimeBootstrapSubsystem::SpawnPrototypeZombies()
 {
     UWorld* World = GetWorld();
-    if (!World)
-    {
-        return;
-    }
+    if (!World) return;
 
     FActorSpawnParameters SpawnParams;
     SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
@@ -177,8 +170,5 @@ void UDeadbrickRuntimeBootstrapSubsystem::SpawnPrototypeZombies()
 void UDeadbrickRuntimeBootstrapSubsystem::ShowStatus(const FString& Message, const FColor& Color) const
 {
     UE_LOG(LogTemp, Display, TEXT("%s"), *Message);
-    if (GEngine)
-    {
-        GEngine->AddOnScreenDebugMessage(-1, 12.0f, Color, Message);
-    }
+    if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 12.0f, Color, Message);
 }
