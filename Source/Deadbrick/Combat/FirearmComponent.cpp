@@ -25,11 +25,22 @@ bool UFirearmComponent::FireFromCamera(const FVector& Origin, const FVector& Dir
         Director->ReportNoise(Origin, Stats.NoiseRadiusCm, Stats.NoiseIntensity, 4.0f);
     }
 
+    const FVector ShotDirection = Direction.GetSafeNormal();
+    const FVector End = Origin + ShotDirection * Stats.RangeCm;
+
     FHitResult Hit;
     FCollisionQueryParams Params(SCENE_QUERY_STAT(DeadbrickFirearm), true, GetOwner());
-    const FVector End = Origin + Direction.GetSafeNormal() * Stats.RangeCm;
+    Params.bReturnPhysicalMaterial = true;
 
-    if (!GetWorld()->LineTraceSingleByChannel(Hit, Origin, End, ECC_Visibility, Params)) return true;
+    // Firearms need to hit character capsules even when a mesh/placeholder does not answer
+    // the Visibility channel. Querying object types makes Pawn, WorldStatic and WorldDynamic
+    // authoritative for the shot and preserves nearest-hit occlusion.
+    FCollisionObjectQueryParams ObjectParams;
+    ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
+    ObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
+    ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+
+    if (!GetWorld()->LineTraceSingleByObjectType(Hit, Origin, End, ObjectParams, Params)) return true;
 
     if (ADestructibleVoxelWorld* VoxelWorld = Cast<ADestructibleVoxelWorld>(Hit.GetActor()))
     {
@@ -37,14 +48,21 @@ bool UFirearmComponent::FireFromCamera(const FVector& Origin, const FVector& Dir
         const int32 Destroyed = VoxelWorld->ApplySphereDamage(DamagePoint, Stats.VoxelDamageRadiusCm, Stats.VoxelDamage);
         if (Destroyed > 0 && VoxelWorld->bEnableStructuralGravity)
         {
-            // Search several metres around the impact so removing a ground-floor support can detach
-            // the floor/roof above even when the newly unsupported cells are not inside the bullet crater.
             VoxelWorld->EvaluateStructuralGravity(DamagePoint, FMath::Max(650.0f, Stats.VoxelDamageRadiusCm * 14.0f));
         }
     }
     else if (AActor* HitActor = Hit.GetActor())
     {
-        UGameplayStatics::ApplyPointDamage(HitActor, Stats.Damage, Direction, Hit, GetOwner()->GetInstigatorController(), GetOwner(), nullptr);
+        UGameplayStatics::ApplyPointDamage(
+            HitActor,
+            Stats.Damage,
+            ShotDirection,
+            Hit,
+            GetOwner() ? GetOwner()->GetInstigatorController() : nullptr,
+            GetOwner(),
+            nullptr);
+
+        UE_LOG(LogTemp, Verbose, TEXT("DEADBRICK firearm hit %s at %s"), *GetNameSafe(HitActor), *Hit.ImpactPoint.ToCompactString());
     }
 
     return true;
