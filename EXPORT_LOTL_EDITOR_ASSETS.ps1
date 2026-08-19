@@ -20,8 +20,8 @@ $LegacyPak = [System.IO.Path]::GetFullPath($LegacyPak)
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " DEADBRICK - LOTL editor-safe asset export" -ForegroundColor Cyan
-Write-Host " cooked reference pak -> GLB/PNG (NO cooked uasset copy)" -ForegroundColor Cyan
+Write-Host " DEADBRICK - LOTL editor-safe asset/metadata export" -ForegroundColor Cyan
+Write-Host " cooked reference pak -> GLB/PNG/JSON (NO cooked uasset copy)" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -52,7 +52,7 @@ function Install-Cue4Parse {
     $Zip = Join-Path $ToolRoot $Asset.name
     Invoke-WebRequest -Headers $Headers -Uri $Asset.browser_download_url -OutFile $Zip
 
-    Get-ChildItem $ToolRoot -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne $Zip } | Remove-Item -Force -ErrorAction SilentlyContinue
+    Get-ChildItem $ToolRoot -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -ne $Zip } | Remove-Item -Force -ErrorAction SilentlyContinue
     Expand-Archive -Path $Zip -DestinationPath $ToolRoot -Force
     Remove-Item $Zip -Force -ErrorAction SilentlyContinue
 
@@ -71,13 +71,16 @@ if ($Mappings) {
     Write-Host "No .usmap mapping found. Exporter will use package metadata that can be decoded without mappings." -ForegroundColor DarkYellow
 }
 
-# Deliberately narrow first pass. These patterns target gameplay-facing meshes/materials that
-# DEADBRICK can bind immediately instead of dumping thousands of irrelevant cooked assets.
+# CUE4Parse's auto mode exports meshes/textures/animations in converter formats and falls back to
+# JSON for non-visual packages. That means the same targeted pass gives DEADBRICK both usable visual
+# references and inspectable Blueprint/default-object metadata for behavior parity.
 $Patterns = @(
     '*FirstPerson*',
     '*First_Person*',
     '*Player*',
     '*Character*',
+    '*Movement*',
+    '*Locomotion*',
     '*Human*',
     '*Hand*',
     '*Arm*',
@@ -102,7 +105,20 @@ $Patterns = @(
     '*Wood*',
     '*Metal*',
     '*Soil*',
-    '*Dirt*'
+    '*Dirt*',
+    '*MainGameMode*',
+    '*GameInstance*',
+    '*AIManager*',
+    '*VoxelManager*',
+    '*MainVoxel*',
+    '*PhysicsVoxel*',
+    '*PropVoxel*',
+    '*SimulationVoxel*',
+    '*ItemManager*',
+    '*SaveManager*',
+    '*AmbienceManager*',
+    '*StructureManager*',
+    '*RoadGenerator*'
 )
 
 if (Test-Path $ExportRoot) {
@@ -127,13 +143,14 @@ foreach ($Pattern in $Patterns) {
 }
 
 Write-Host ""
-Write-Host "Exporting priority LOTL meshes/material textures..." -ForegroundColor Cyan
+Write-Host "Exporting priority LOTL visuals and gameplay metadata..." -ForegroundColor Cyan
 & $Cue4Parse @Args 2>&1 | Tee-Object -FilePath $ExportLog | Out-Host
 $ExitCode = $LASTEXITCODE
 
 $Glb = @(Get-ChildItem $ExportRoot -Recurse -Include '*.glb','*.gltf' -File -ErrorAction SilentlyContinue)
 $Textures = @(Get-ChildItem $ExportRoot -Recurse -Include '*.png','*.tga','*.jpg','*.jpeg' -File -ErrorAction SilentlyContinue)
 $ActorX = @(Get-ChildItem $ExportRoot -Recurse -Include '*.psk','*.pskx','*.psa' -File -ErrorAction SilentlyContinue)
+$Json = @(Get-ChildItem $ExportRoot -Recurse -Filter '*.json' -File -ErrorAction SilentlyContinue)
 
 $Marker = Join-Path $ProjectRoot "Saved\LOTL_REFERENCE_EXPORT.txt"
 New-Item -ItemType Directory -Path (Split-Path -Parent $Marker) -Force | Out-Null
@@ -145,26 +162,33 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $Marker) -Force | Out-Nul
     "GLTFMeshes: $($Glb.Count)",
     "Textures: $($Textures.Count)",
     "ActorXFiles: $($ActorX.Count)",
+    "GameplayMetadataJson: $($Json.Count)",
     "ExportRoot: $ExportRoot",
     "Log: $ExportLog"
 ) | Set-Content $Marker
 
 Write-Host ""
-Write-Host "Editor-safe export result:" -ForegroundColor Cyan
-Write-Host "  GLB/GLTF meshes : $($Glb.Count)" -ForegroundColor Green
-Write-Host "  textures        : $($Textures.Count)" -ForegroundColor Green
-if ($ActorX.Count -gt 0) { Write-Host "  ActorX anim/mesh: $($ActorX.Count)" -ForegroundColor DarkGray }
+Write-Host "Reference export result:" -ForegroundColor Cyan
+Write-Host "  GLB/GLTF meshes   : $($Glb.Count)" -ForegroundColor Green
+Write-Host "  textures          : $($Textures.Count)" -ForegroundColor Green
+Write-Host "  gameplay JSON     : $($Json.Count)" -ForegroundColor Green
+if ($ActorX.Count -gt 0) { Write-Host "  ActorX anim/mesh  : $($ActorX.Count)" -ForegroundColor DarkGray }
 
-if ($ExitCode -ne 0 -and $Glb.Count -eq 0 -and $Textures.Count -eq 0) {
-    Write-Host "CUE4Parse could not decode the priority assets. Send ReferenceExtracted\Logs\cue4parse_priority_export.txt." -ForegroundColor Red
+if ($ExitCode -ne 0 -and $Glb.Count -eq 0 -and $Textures.Count -eq 0 -and $Json.Count -eq 0) {
+    Write-Host "CUE4Parse could not decode the priority packages. Send ReferenceExtracted\Logs\cue4parse_priority_export.txt." -ForegroundColor Red
     exit 30
 }
 
 if ($Glb.Count -eq 0 -and $Textures.Count -eq 0) {
-    Write-Host "No priority GLB/PNG assets were produced yet. The package list/mappings need another pass." -ForegroundColor Yellow
+    if ($Json.Count -gt 0) {
+        Write-Host "Gameplay metadata was decoded, but no priority visual assets were produced yet." -ForegroundColor Yellow
+        Write-Host "DEADBRICK will keep its visible fallback viewmodel until a compatible GLB/texture export is available." -ForegroundColor Yellow
+        exit 0
+    }
+    Write-Host "No priority editor-safe assets were produced yet. The package list/mappings need another pass." -ForegroundColor Yellow
     exit 31
 }
 
 Write-Host ""
-Write-Host "ReferenceExported is ready for Unreal's normal importer." -ForegroundColor Green
+Write-Host "ReferenceExported is ready for Unreal's normal importer and behavior analysis." -ForegroundColor Green
 exit 0
