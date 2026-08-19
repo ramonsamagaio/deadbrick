@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "Items/DeadbrickItemTypes.h"
 #include "DeadbrickCharacter.generated.h"
 
 class UAnimSequence;
@@ -21,6 +22,12 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly) TObjectPtr<UCameraComponent> FirstPersonCamera;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly) TObjectPtr<UFirearmComponent> Firearm;
 
+    UPROPERTY(BlueprintReadOnly, Category="Inventory")
+    TMap<EDeadbrickItemType, int32> Inventory;
+
+    UFUNCTION(BlueprintPure, Category="Inventory")
+    int32 GetInventoryQuantity(EDeadbrickItemType ItemType) const;
+
 protected:
     virtual void BeginPlay() override;
 
@@ -33,12 +40,18 @@ private:
     FRotator SafeSpawnRotation = FRotator::ZeroRotator;
     bool bHasSafeSpawn = false;
 
+    float WalkSpeed = 500.0f;
+    float SprintSpeed = 760.0f;
+
     void MoveForward(float Value);
     void MoveRight(float Value);
     void LookYaw(float Value);
     void LookPitch(float Value);
     void Fire();
     void Reload();
+    void Interact();
+    void SprintPressed();
+    void SprintReleased();
     void TryApplyReferenceVisuals();
     void UpdateReferenceAnimation();
     void RecoverFromFall();
