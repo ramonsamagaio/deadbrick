@@ -5,6 +5,7 @@
 #include "DeadbrickVoxelTypes.h"
 #include "DestructibleVoxelWorld.generated.h"
 
+class AVoxelPhysicsIsland;
 class UMaterialInterface;
 class UProceduralMeshComponent;
 
@@ -26,17 +27,29 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics")
     bool bEnableStructuralGravity = true;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="512", ClampMax="65536"))
-    int32 MaxStructuralScanVoxels = 8192;
+    // Connectivity is intentionally allowed to cross very large structures. Work is amortized over
+    // frames, so this is a safety ceiling rather than a per-frame cost ceiling.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="4096", ClampMax="524288"))
+    int32 MaxStructuralScanVoxels = 262144;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="64", ClampMax="4096"))
-    int32 MaxPhysicsIslandVoxels = 512;
+    // Target amount of voxel geometry represented by one macro rigid body. The collision for each
+    // macro body remains a cheap convex hull, so large detached structures do not become one body per voxel.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="256", ClampMax="65536"))
+    int32 MaxPhysicsIslandVoxels = 4096;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="128", ClampMax="8192"))
-    int32 MaxDetachedComponentVoxels = 4096;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="4096", ClampMax="524288"))
+    int32 MaxDetachedComponentVoxels = 262144;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="64", ClampMax="16384"))
-    int32 StructuralWorkBudgetPerFrame = 2048;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="1", ClampMax="32"))
+    int32 MaxPhysicsBodiesPerCollapse = 8;
+
+    // Build at most this many heavy macro meshes per render frame. Once all are prepared, the static
+    // voxels are removed and all prepared bodies are activated together.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="1", ClampMax="8"))
+    int32 PhysicsIslandBuildBudgetPerFrame = 1;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="256", ClampMax="32768"))
+    int32 StructuralWorkBudgetPerFrame = 4096;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="1", ClampMax="16"))
     int32 ChunkRebuildBudgetPerFrame = 2;
@@ -102,6 +115,14 @@ private:
         }
     };
 
+    struct FPendingCollapseState
+    {
+        TArray<FIntVector> Cells;
+        TArray<TArray<FIntVector>> Groups;
+        TArray<TWeakObjectPtr<AVoxelPhysicsIsland>> PreparedIslands;
+        int32 NextGroupIndex = 0;
+    };
+
     TMap<FIntVector, FDeadbrickVoxelChunk> Chunks;
     TMap<FIntVector, TObjectPtr<UProceduralMeshComponent>> ChunkMeshes;
     TMap<EDeadbrickVoxelMaterial, TObjectPtr<UMaterialInterface>> MaterialCache;
@@ -113,7 +134,16 @@ private:
 
     TSet<FIntVector> DirtyChunks;
     int32 BulkEditDepth = 0;
+
+    // Gameplay damage only adds seeds here. The current connectivity pass finishes before a fresh
+    // pass consumes new seeds, so rapid fire is coalesced instead of launching N full scans of one building.
+    TSet<FIntVector> PendingStructuralSeeds;
     TArray<FStructuralQueryState> StructuralQueries;
+
+    // Cells already scheduled to become dynamic are excluded from subsequent seed collection until
+    // their prepared rigid bodies are activated.
+    TSet<FIntVector> PendingCollapseCells;
+    TArray<FPendingCollapseState> PendingCollapses;
 
     static int32 FloorDiv(int32 Value, int32 Divisor);
     static int32 PositiveMod(int32 Value, int32 Divisor);
@@ -129,7 +159,11 @@ private:
     UMaterialInterface* ResolveSurfaceMaterial(EDeadbrickVoxelMaterial Material);
     void ResolveStructuralGravityNear(const FVector& WorldCenter, float RadiusCm);
     void QueueStructuralCheckFromDestroyed(const TArray<FIntVector>& DestroyedCells);
+    void StartNextStructuralQueryIfNeeded();
     void ProcessStructuralQueries();
+    void QueueDetachedComponentForPhysics(const TArray<FIntVector>& Component);
+    void ProcessPendingCollapses();
+    void DetachCellsFromStaticWorld(const TArray<FIntVector>& Cells);
     void SpawnDetachedComponentAsPhysics(const TArray<FIntVector>& Component);
     void SpawnSalvageDrops(const FVector& WorldCenter, const TMap<EDeadbrickVoxelMaterial, int32>& DestroyedByMaterial);
 };
