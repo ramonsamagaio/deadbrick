@@ -28,6 +28,10 @@ public:
     UFirearmComponent();
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Firearm") FDeadbrickFirearmStats Stats;
+
+    // Prototype convenience: firing never consumes ammo and Reload becomes a no-op while enabled.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Firearm|Prototype") bool bInfiniteAmmo = true;
+
     UPROPERTY(BlueprintReadOnly, Category="Firearm") int32 AmmoInMagazine = 30;
     UPROPERTY(BlueprintReadOnly, Category="Firearm") int32 ReserveAmmo = 90;
 
