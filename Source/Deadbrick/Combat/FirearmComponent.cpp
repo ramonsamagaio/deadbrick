@@ -32,9 +32,6 @@ bool UFirearmComponent::FireFromCamera(const FVector& Origin, const FVector& Dir
     FCollisionQueryParams Params(SCENE_QUERY_STAT(DeadbrickFirearm), true, GetOwner());
     Params.bReturnPhysicalMaterial = true;
 
-    // Firearms need to hit character capsules even when a mesh/placeholder does not answer
-    // the Visibility channel. Querying object types makes Pawn, WorldStatic and WorldDynamic
-    // authoritative for the shot and preserves nearest-hit occlusion.
     FCollisionObjectQueryParams ObjectParams;
     ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
     ObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
@@ -45,11 +42,11 @@ bool UFirearmComponent::FireFromCamera(const FVector& Origin, const FVector& Dir
     if (ADestructibleVoxelWorld* VoxelWorld = Cast<ADestructibleVoxelWorld>(Hit.GetActor()))
     {
         const FVector DamagePoint = Hit.ImpactPoint - Hit.ImpactNormal * 2.0f;
-        const int32 Destroyed = VoxelWorld->ApplySphereDamage(DamagePoint, Stats.VoxelDamageRadiusCm, Stats.VoxelDamage);
-        if (Destroyed > 0 && VoxelWorld->bEnableStructuralGravity)
-        {
-            VoxelWorld->EvaluateStructuralGravity(DamagePoint, FMath::Max(650.0f, Stats.VoxelDamageRadiusCm * 14.0f));
-        }
+
+        // ApplySphereDamage now queues the structural connectivity work itself. The previous version
+        // immediately ran a second full structural scan here, so a single bullet could synchronously
+        // traverse/rebuild tens of thousands of voxels twice before returning to the frame.
+        VoxelWorld->ApplySphereDamage(DamagePoint, Stats.VoxelDamageRadiusCm, Stats.VoxelDamage);
     }
     else if (AActor* HitActor = Hit.GetActor())
     {
