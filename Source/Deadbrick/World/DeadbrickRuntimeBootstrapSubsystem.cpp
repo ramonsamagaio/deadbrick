@@ -22,13 +22,9 @@ void UDeadbrickRuntimeBootstrapSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 
     ShowStatus(TEXT("DEADBRICK: building procedural destructible urban test district..."), FColor::Yellow);
     if (DeadbrickReferenceAssets::HasCookedReferenceAssets())
-    {
         ShowStatus(TEXT("LOTL reference content detected: skins, animations, props and materials are being auto-bound."), FColor::Cyan);
-    }
     else
-    {
         ShowStatus(TEXT("LOTL reference packages are not readable yet: run IMPORT_LOTL_REFERENCE_UE58.bat."), FColor::Orange);
-    }
 
     BuildPrototypeWorld();
 
@@ -77,6 +73,10 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
     CityGenerator->StreetWidthMeters = 8.0f;
     CityGenerator->FloorHeightMeters = 3.0f;
     CityGenerator->GenerateCity();
+
+    // Everything before this point is deterministic baseline generation. Only gameplay changes after it
+    // become save deltas, so saves stay tiny even when the city eventually spans many streamed districts.
+    VoxelWorld->StartRuntimePersistence();
 
     SpawnPrototypeZombies();
     ShowStatus(TEXT("Urban voxel district ready: roads, soil, floors, walls, rooms and stairs are destructible cells."), FColor::Green);
@@ -141,7 +141,7 @@ void UDeadbrickRuntimeBootstrapSubsystem::EnsurePlayer()
     PC->SetInputMode(FInputModeGameOnly());
     PC->bShowMouseCursor = false;
 
-    ShowStatus(TEXT("WASD move | Shift sprint | Space jump | LMB shoot/destroy | R reload | E collect"), FColor::Green);
+    ShowStatus(TEXT("WASD move | Shift sprint | Space jump | LMB shoot | R reload | E interact/collect | C craft | F5 save | F9 load"), FColor::Green);
 }
 
 void UDeadbrickRuntimeBootstrapSubsystem::SpawnPrototypeZombies()
