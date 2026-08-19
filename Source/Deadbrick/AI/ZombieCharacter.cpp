@@ -2,6 +2,7 @@
 #include "AI/ZombieDirectorSubsystem.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Engine/World.h"
 
 AZombieCharacter::AZombieCharacter()
 {
