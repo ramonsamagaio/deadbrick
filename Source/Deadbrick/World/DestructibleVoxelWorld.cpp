@@ -1,5 +1,6 @@
 #include "World/DestructibleVoxelWorld.h"
 #include "ProceduralMeshComponent.h"
+#include "Components/SceneComponent.h"
 #include "Engine/CollisionProfile.h"
 
 ADestructibleVoxelWorld::ADestructibleVoxelWorld()
@@ -54,7 +55,7 @@ FDeadbrickVoxelChunk& ADestructibleVoxelWorld::FindOrCreateChunk(const FIntVecto
     const int32 Required = ChunkSize * ChunkSize * ChunkSize;
     if (Chunk.Voxels.Num() != Required)
     {
-        Chunk.Voxels.SetNumZeroed(Required);
+        Chunk.Voxels.SetNum(Required);
     }
     return Chunk;
 }
@@ -227,15 +228,30 @@ void ADestructibleVoxelWorld::RebuildChunk(const FIntVector& ChunkCoord)
         const float H = VoxelSizeCm * 0.5f;
         const FVector FaceCenter = Center + N * H;
         const int32 Base = Vertices.Num();
+
         Vertices.Add(FaceCenter + (-AxisA - AxisB) * H);
         Vertices.Add(FaceCenter + ( AxisA - AxisB) * H);
         Vertices.Add(FaceCenter + ( AxisA + AxisB) * H);
         Vertices.Add(FaceCenter + (-AxisA + AxisB) * H);
-        Triangles.Append({Base, Base + 1, Base + 2, Base, Base + 2, Base + 3});
-        for (int32 I = 0; I < 4; ++I) Normals.Add(N);
-        UVs.Append({FVector2D(0,0), FVector2D(1,0), FVector2D(1,1), FVector2D(0,1)});
-        Colors.Append({FLinearColor::White, FLinearColor::White, FLinearColor::White, FLinearColor::White});
-        Tangents.Append({FProcMeshTangent(AxisA, false), FProcMeshTangent(AxisA, false), FProcMeshTangent(AxisA, false), FProcMeshTangent(AxisA, false)});
+
+        Triangles.Add(Base);
+        Triangles.Add(Base + 1);
+        Triangles.Add(Base + 2);
+        Triangles.Add(Base);
+        Triangles.Add(Base + 2);
+        Triangles.Add(Base + 3);
+
+        for (int32 I = 0; I < 4; ++I)
+        {
+            Normals.Add(N);
+            Colors.Add(FLinearColor::White);
+            Tangents.Add(FProcMeshTangent(AxisA, false));
+        }
+
+        UVs.Add(FVector2D(0,0));
+        UVs.Add(FVector2D(1,0));
+        UVs.Add(FVector2D(1,1));
+        UVs.Add(FVector2D(0,1));
     };
 
     for (int32 Z = 0; Z < ChunkSize; ++Z)
@@ -251,9 +267,12 @@ void ADestructibleVoxelWorld::RebuildChunk(const FIntVector& ChunkCoord)
         for (int32 Face = 0; Face < 6; ++Face)
         {
             FDeadbrickVoxel Neighbor;
-            if (!GetVoxel(Global + Directions[Face], Neighbor)) AddFace(Center, Face);
+            if (!GetVoxel(Global + Directions[Face], Neighbor))
+            {
+                AddFace(Center, Face);
+            }
         }
     }
 
-    Mesh->CreateMeshSection_LinearColor(0, Vertices, Triangles, Normals, UVs, Colors, Tangents, true);
+    Mesh->CreateMeshSection_LinearColor(0, Vertices, Triangles, Normals, UVs, Colors, Tangents, true, false);
 }
