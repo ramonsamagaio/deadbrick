@@ -157,7 +157,7 @@ void AZombieCharacter::TryApplyReferenceVisuals()
         return;
     }
 
-    const int32 Index = FMath::Abs(GetUniqueID()) % ReferenceMeshes.Num();
+    const int32 Index = static_cast<int32>(GetUniqueID() % static_cast<uint32>(ReferenceMeshes.Num()));
     USkeletalMesh* ReferenceMesh = ReferenceMeshes[Index];
     PlaceholderBody->SetVisibility(false, true);
     GetMesh()->SetSkeletalMesh(ReferenceMesh);
