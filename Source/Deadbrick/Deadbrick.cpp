@@ -7,7 +7,7 @@ public:
     virtual void StartupModule() override
     {
         FDefaultGameModuleImpl::StartupModule();
-        UE_LOG(LogTemp, Display, TEXT("DEADBRICK MODULE BUILD 2026-08-19-H FPS-STABILITY-LIGHTING-ASSET-SAFETY LOADED"));
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK MODULE BUILD 2026-08-19-I LOTL-SAFE-BINDING-FPS-COMBAT-LIGHTING LOADED"));
     }
 };
 
