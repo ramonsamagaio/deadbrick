@@ -72,10 +72,7 @@ FDeadbrickVoxelChunk& ADestructibleVoxelWorld::FindOrCreateChunk(const FIntVecto
 {
     FDeadbrickVoxelChunk& Chunk = Chunks.FindOrAdd(ChunkCoord);
     const int32 Required = ChunkSize * ChunkSize * ChunkSize;
-    if (Chunk.Voxels.Num() != Required)
-    {
-        Chunk.Voxels.SetNum(Required);
-    }
+    if (Chunk.Voxels.Num() != Required) Chunk.Voxels.SetNum(Required);
     return Chunk;
 }
 
@@ -142,6 +139,7 @@ void ADestructibleVoxelWorld::SetVoxel(const FIntVector& Voxel, EDeadbrickVoxelM
     FDeadbrickVoxel& Cell = Chunk.Voxels[ToIndex(ToLocalCoord(Voxel))];
     Cell.Material = Material;
     Cell.Integrity = Material == EDeadbrickVoxelMaterial::Air ? 0 : (Integrity == 255 ? DefaultIntegrityFor(Material) : Integrity);
+    if (bRecordRuntimeEdits) RuntimeEdits.Add(Voxel, Cell);
     MarkDirty(ChunkCoord);
 }
 
@@ -151,16 +149,44 @@ void ADestructibleVoxelWorld::FillBox(const FIntVector& MinVoxel, const FIntVect
     for (int32 Z = MinVoxel.Z; Z <= MaxVoxel.Z; ++Z)
     for (int32 Y = MinVoxel.Y; Y <= MaxVoxel.Y; ++Y)
     for (int32 X = MinVoxel.X; X <= MaxVoxel.X; ++X)
-    {
         SetVoxel(FIntVector(X, Y, Z), Material, Integrity);
-    }
     EndBulkEdit();
 }
 
-void ADestructibleVoxelWorld::BeginBulkEdit()
+void ADestructibleVoxelWorld::StartRuntimePersistence()
 {
-    ++BulkEditDepth;
+    RuntimeEdits.Reset();
+    bRecordRuntimeEdits = true;
 }
+
+void ADestructibleVoxelWorld::ExportRuntimeEdits(TArray<FDeadbrickVoxelEditRecord>& OutEdits) const
+{
+    OutEdits.Reset();
+    OutEdits.Reserve(RuntimeEdits.Num());
+    for (const TPair<FIntVector, FDeadbrickVoxel>& Pair : RuntimeEdits)
+    {
+        FDeadbrickVoxelEditRecord Record;
+        Record.Coord = Pair.Key;
+        Record.Voxel = Pair.Value;
+        OutEdits.Add(Record);
+    }
+}
+
+void ADestructibleVoxelWorld::ApplyRuntimeEdits(const TArray<FDeadbrickVoxelEditRecord>& Edits)
+{
+    const bool bWasRecording = bRecordRuntimeEdits;
+    bRecordRuntimeEdits = false;
+    BeginBulkEdit();
+    for (const FDeadbrickVoxelEditRecord& Record : Edits)
+        SetVoxel(Record.Coord, Record.Voxel.Material, Record.Voxel.Integrity);
+    EndBulkEdit();
+
+    RuntimeEdits.Reset();
+    for (const FDeadbrickVoxelEditRecord& Record : Edits) RuntimeEdits.Add(Record.Coord, Record.Voxel);
+    bRecordRuntimeEdits = bWasRecording || true;
+}
+
+void ADestructibleVoxelWorld::BeginBulkEdit() { ++BulkEditDepth; }
 
 void ADestructibleVoxelWorld::EndBulkEdit()
 {
@@ -219,9 +245,7 @@ int32 ADestructibleVoxelWorld::ApplySphereDamage(const FVector& WorldCenter, flo
 
     if (Destroyed > 0 && bSpawnSalvageDrops) SpawnSalvageDrops(WorldCenter, DestroyedByMaterial);
     if (Destroyed > 0 && bEnableStructuralGravity)
-    {
         ResolveStructuralGravityNear(WorldCenter, FMath::Max(RadiusCm * 4.0f, VoxelSizeCm * 8.0f));
-    }
     return Destroyed;
 }
 
@@ -257,7 +281,6 @@ void ADestructibleVoxelWorld::ResolveStructuralGravityNear(const FVector& WorldC
 
     TSet<FIntVector> Visited;
     const int32 CandidateRadiusSq = RadiusV * RadiusV;
-
     for (int32 Z = -RadiusV; Z <= RadiusV; ++Z)
     for (int32 Y = -RadiusV; Y <= RadiusV; ++Y)
     for (int32 X = -RadiusV; X <= RadiusV; ++X)
@@ -284,8 +307,8 @@ void ADestructibleVoxelWorld::ResolveStructuralGravityNear(const FVector& WorldC
             const FIntVector Current = Queue[ReadIndex++];
             FDeadbrickVoxel CurrentVoxel;
             if (!GetVoxel(Current, CurrentVoxel)) continue;
-
             Component.Add(Current);
+
             if (Current.Z <= 0 || CurrentVoxel.Material == EDeadbrickVoxelMaterial::Soil || CurrentVoxel.Material == EDeadbrickVoxelMaterial::Asphalt)
             {
                 bGrounded = true;
@@ -337,6 +360,7 @@ UProceduralMeshComponent* ADestructibleVoxelWorld::FindOrCreateChunkMesh(const F
     Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     Mesh->SetCollisionObjectType(ECC_WorldStatic);
     Mesh->SetCollisionResponseToAllChannels(ECR_Block);
+    Mesh->SetCanEverAffectNavigation(true);
     ChunkMeshes.Add(ChunkCoord, Mesh);
     return Mesh;
 }
@@ -374,7 +398,6 @@ void ADestructibleVoxelWorld::RebuildChunk(const FIntVector& ChunkCoord)
         Buffer.Vertices.Add(FaceCenter + ( AxisA + AxisB) * H);
         Buffer.Vertices.Add(FaceCenter + (-AxisA + AxisB) * H);
         Buffer.Triangles.Append({Base, Base + 1, Base + 2, Base, Base + 2, Base + 3});
-
         for (int32 I = 0; I < 4; ++I)
         {
             Buffer.Normals.Add(N);
@@ -423,10 +446,7 @@ void ADestructibleVoxelWorld::RebuildChunk(const FIntVector& ChunkCoord)
             false);
 
         const EDeadbrickVoxelMaterial Material = (EDeadbrickVoxelMaterial)MaterialIndex;
-        if (UMaterialInterface* SurfaceMaterial = ResolveSurfaceMaterial(Material))
-        {
-            Mesh->SetMaterial(SectionIndex, SurfaceMaterial);
-        }
+        if (UMaterialInterface* SurfaceMaterial = ResolveSurfaceMaterial(Material)) Mesh->SetMaterial(SectionIndex, SurfaceMaterial);
         ++SectionIndex;
     }
 }
