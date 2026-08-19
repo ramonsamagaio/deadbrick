@@ -5,6 +5,7 @@
 #include "DeadbrickVoxelTypes.h"
 #include "DestructibleVoxelWorld.generated.h"
 
+class UMaterialInterface;
 class UProceduralMeshComponent;
 
 UCLASS(BlueprintType)
@@ -55,6 +56,8 @@ public:
 private:
     TMap<FIntVector, FDeadbrickVoxelChunk> Chunks;
     TMap<FIntVector, TObjectPtr<UProceduralMeshComponent>> ChunkMeshes;
+    TMap<EDeadbrickVoxelMaterial, TObjectPtr<UMaterialInterface>> MaterialCache;
+    TSet<EDeadbrickVoxelMaterial> MaterialResolutionAttempted;
 
     TSet<FIntVector> DirtyChunks;
     int32 BulkEditDepth = 0;
@@ -69,6 +72,7 @@ private:
     void MarkDirty(const FIntVector& ChunkCoord);
     void RebuildChunk(const FIntVector& ChunkCoord);
     uint8 DefaultIntegrityFor(EDeadbrickVoxelMaterial Material) const;
+    UMaterialInterface* ResolveSurfaceMaterial(EDeadbrickVoxelMaterial Material);
     void ResolveStructuralGravityNear(const FVector& WorldCenter, float RadiusCm);
     void SpawnSalvageDrops(const FVector& WorldCenter, const TMap<EDeadbrickVoxelMaterial, int32>& DestroyedByMaterial);
 };
