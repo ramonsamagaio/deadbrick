@@ -34,15 +34,20 @@ protected:
 private:
     UPROPERTY(Transient) TObjectPtr<UAnimSequence> IdleAnimation;
     UPROPERTY(Transient) TObjectPtr<UAnimSequence> WalkAnimation;
+    UPROPERTY(Transient) TObjectPtr<UAnimSequence> AttackAnimation;
+    UPROPERTY(Transient) TObjectPtr<UAnimSequence> DeathAnimation;
     UPROPERTY(Transient) TObjectPtr<UAnimSequence> CurrentAnimation;
 
     TWeakObjectPtr<AActor> CurrentTarget;
     FVector MoveTarget = FVector::ZeroVector;
     bool bHasMoveTarget = false;
+    bool bDead = false;
     float RetargetTimer = 0.0f;
     float AttackTimer = 0.0f;
+    float AnimationLockTimer = 0.0f;
 
     void AcquireTarget();
     void TryApplyReferenceVisuals();
     void UpdateReferenceAnimation();
+    void PlayReferenceAnimation(UAnimSequence* Animation, bool bLoop, float LockSeconds = 0.0f);
 };
