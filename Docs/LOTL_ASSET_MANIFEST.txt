@@ -1,0 +1,11 @@
+﻿DEADBRICK - LayOfTheLand Asset Manifest
+Generated: 2026-08-19T11:18:33.8463442-03:00
+Stage: C:\godot\games\deadbrick\deadbrick\ReferenceExtracted\LayOfTheLand
+Total cooked files: 8134
+Total .uasset files: 0
+
+=== CATEGORY SUMMARY (.uasset only) ===
+
+=== PRIORITY ASSETS ===
+
+=== ALL UASSETS ===
