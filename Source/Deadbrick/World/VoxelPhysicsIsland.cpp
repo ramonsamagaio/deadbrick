@@ -184,6 +184,8 @@ void AVoxelPhysicsIsland::ActivatePhysics()
 
     SetActorHiddenInGame(false);
     MeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+    MeshComponent->SetUseCCD(true, NAME_None);
+    MeshComponent->SetMaxDepenetrationVelocity(NAME_None, 1000.0f);
     MeshComponent->SetSimulatePhysics(true);
     MeshComponent->SetEnableGravity(true);
     MeshComponent->SetMassOverrideInKg(NAME_None, PreparedMassKg, true);
