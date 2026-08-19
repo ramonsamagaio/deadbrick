@@ -14,6 +14,7 @@ class DEADBRICK_API AVoxelPhysicsIsland : public AActor
 
 public:
     AVoxelPhysicsIsland();
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
     UFUNCTION()
     void InitializeFromVoxels(ADestructibleVoxelWorld* SourceWorld, const TArray<FIntVector>& Voxels, bool bStartSimulating = true);
@@ -26,5 +27,9 @@ private:
     TObjectPtr<UProceduralMeshComponent> MeshComponent;
 
     float PreparedMassKg = 1.0f;
+    FVector PreparedLocalCenter = FVector::ZeroVector;
+    FVector PreparedHalfExtents = FVector(10.0f);
+    int64 PhysXBodyHandle = INDEX_NONE;
     bool bPreparedForPhysics = false;
+    bool bUsingPhysX = false;
 };
