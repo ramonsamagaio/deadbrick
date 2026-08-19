@@ -6,6 +6,7 @@
 #include "World/DeadbrickVoxelTypes.h"
 #include "DeadbrickPickupItem.generated.h"
 
+class USphereComponent;
 class UStaticMeshComponent;
 
 UCLASS()
@@ -29,6 +30,9 @@ public:
     int32 Collect(EDeadbrickItemType& OutType);
 
 private:
+    UPROPERTY(VisibleAnywhere)
+    TObjectPtr<USphereComponent> PhysicsBody;
+
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<UStaticMeshComponent> MeshComponent;
 };
