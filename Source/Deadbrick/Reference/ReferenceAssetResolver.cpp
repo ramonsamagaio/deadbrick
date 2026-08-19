@@ -6,17 +6,22 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
-#include "HAL/FileManager.h"
 #include "Materials/MaterialInterface.h"
-#include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
-#include "UObject/UObjectGlobals.h"
 
 namespace
 {
     bool bRegistryScanned = false;
-    bool bFilesystemIndexed = false;
-    TArray<FString> FilesystemObjectPaths;
+
+    bool IsReferencePath(const FString& Input)
+    {
+        const FString Path = Input.ToLower();
+        return Path.Contains(TEXT("layoftheland")) ||
+               Path.Contains(TEXT("lay_of_the_land")) ||
+               Path.Contains(TEXT("lotl")) ||
+               Path.Contains(TEXT("referenceimported")) ||
+               Path.Contains(TEXT("reference_imported"));
+    }
 
     int32 ScoreString(const FString& Input, const TArray<FString>& PreferredKeywords)
     {
@@ -35,9 +40,7 @@ namespace
         }
 
         if (!bMatchedKeyword) return -100000;
-
-        if (Haystack.Contains(TEXT("layoftheland"))) Score += 300;
-        if (Haystack.Contains(TEXT("lotl"))) Score += 220;
+        if (IsReferencePath(Haystack)) Score += 500;
         if (Haystack.Contains(TEXT("deadbrick"))) Score -= 600;
         if (Haystack.Contains(TEXT("preview"))) Score -= 80;
         if (Haystack.Contains(TEXT("lod"))) Score -= 30;
@@ -78,69 +81,6 @@ namespace
         RegistryModule.Get().GetAssets(Filter, OutAssets, true);
     }
 
-    void EnsureFilesystemIndex()
-    {
-        if (bFilesystemIndexed) return;
-        bFilesystemIndexed = true;
-        FilesystemObjectPaths.Reset();
-
-        const FString ContentDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir());
-        TArray<FString> Files;
-        IFileManager::Get().FindFilesRecursive(Files, *ContentDir, TEXT("*.uasset"), true, false, false);
-
-        FilesystemObjectPaths.Reserve(Files.Num());
-        for (FString Filename : Files)
-        {
-            Filename = FPaths::ConvertRelativePathToFull(Filename);
-            FString Relative = Filename;
-            if (!FPaths::MakePathRelativeTo(Relative, *ContentDir)) continue;
-
-            Relative = FPaths::ChangeExtension(Relative, TEXT(""));
-            Relative.ReplaceInline(TEXT("\\"), TEXT("/"));
-            while (Relative.StartsWith(TEXT("/"))) Relative.RightChopInline(1);
-            if (Relative.IsEmpty()) continue;
-
-            const FString AssetName = FPaths::GetBaseFilename(Relative);
-            if (AssetName.IsEmpty()) continue;
-            FilesystemObjectPaths.Add(FString::Printf(TEXT("/Game/%s.%s"), *Relative, *AssetName));
-        }
-
-        UE_LOG(LogTemp, Display, TEXT("DEADBRICK cooked filesystem index: %d package candidates under Content"), FilesystemObjectPaths.Num());
-    }
-
-    template <typename TObjectType>
-    TArray<TObjectType*> LoadFilesystemAssets(const TArray<FString>& Keywords, int32 MaxResults)
-    {
-        EnsureFilesystemIndex();
-
-        TArray<FString> Ranked = FilesystemObjectPaths;
-        Ranked.Sort([&](const FString& A, const FString& B)
-        {
-            const int32 ScoreA = ScoreString(A, Keywords);
-            const int32 ScoreB = ScoreString(B, Keywords);
-            if (ScoreA == ScoreB) return A < B;
-            return ScoreA > ScoreB;
-        });
-
-        TArray<TObjectType*> Result;
-        int32 Attempted = 0;
-        const int32 MaxAttempts = FMath::Max(MaxResults * 40, 120);
-        for (const FString& ObjectPath : Ranked)
-        {
-            if (ScoreString(ObjectPath, Keywords) < 0) continue;
-            if (++Attempted > MaxAttempts) break;
-
-            UObject* LoadedObject = StaticLoadObject(TObjectType::StaticClass(), nullptr, *ObjectPath);
-            if (TObjectType* Loaded = Cast<TObjectType>(LoadedObject))
-            {
-                Result.AddUnique(Loaded);
-                UE_LOG(LogTemp, Display, TEXT("DEADBRICK direct cooked load: %s"), *ObjectPath);
-                if (Result.Num() >= MaxResults) break;
-            }
-        }
-        return Result;
-    }
-
     template <typename TObjectType>
     TArray<TObjectType*> LoadRankedAssets(const FTopLevelAssetPath& ClassPath, const TArray<FString>& Keywords, int32 MaxResults)
     {
@@ -161,14 +101,8 @@ namespace
             if (TObjectType* Loaded = Cast<TObjectType>(Asset.GetAsset()))
             {
                 Result.AddUnique(Loaded);
-                if (Result.Num() >= MaxResults) return Result;
+                if (Result.Num() >= MaxResults) break;
             }
-        }
-
-        for (TObjectType* Loaded : LoadFilesystemAssets<TObjectType>(Keywords, MaxResults))
-        {
-            Result.AddUnique(Loaded);
-            if (Result.Num() >= MaxResults) break;
         }
         return Result;
     }
@@ -176,25 +110,16 @@ namespace
 
 bool DeadbrickReferenceAssets::HasCookedReferenceAssets()
 {
-    EnsureFilesystemIndex();
-
-    if (FilesystemObjectPaths.Num() > 100) return true;
-
     TArray<FAssetData> SkeletalMeshes;
     GetAssetsByClass(USkeletalMesh::StaticClass()->GetClassPathName(), SkeletalMeshes);
     for (const FAssetData& Asset : SkeletalMeshes)
-    {
-        const FString Path = Asset.PackageName.ToString().ToLower();
-        if (!Path.Contains(TEXT("deadbrick"))) return true;
-    }
+        if (IsReferencePath(Asset.PackageName.ToString())) return true;
 
     TArray<FAssetData> StaticMeshes;
     GetAssetsByClass(UStaticMesh::StaticClass()->GetClassPathName(), StaticMeshes);
     for (const FAssetData& Asset : StaticMeshes)
-    {
-        const FString Path = Asset.PackageName.ToString().ToLower();
-        if (!Path.Contains(TEXT("deadbrick"))) return true;
-    }
+        if (IsReferencePath(Asset.PackageName.ToString())) return true;
+
     return false;
 }
 
@@ -235,14 +160,6 @@ UAnimSequence* DeadbrickReferenceAssets::FindAnimationForSkeleton(USkeleton* Ske
 
         if (OutObjectPath) *OutObjectPath = Sequence->GetPathName();
         UE_LOG(LogTemp, Display, TEXT("DEADBRICK reference animation: %s"), *Sequence->GetPathName());
-        return Sequence;
-    }
-
-    for (UAnimSequence* Sequence : LoadFilesystemAssets<UAnimSequence>(PreferredKeywords, 160))
-    {
-        if (!Sequence || Sequence->GetSkeleton() != Skeleton) continue;
-        if (OutObjectPath) *OutObjectPath = Sequence->GetPathName();
-        UE_LOG(LogTemp, Display, TEXT("DEADBRICK direct reference animation: %s"), *Sequence->GetPathName());
         return Sequence;
     }
     return nullptr;
