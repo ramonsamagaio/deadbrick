@@ -76,7 +76,29 @@ void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWo
         }
     }
 
-    MeshComponent->CreateMeshSection_LinearColor(0, Vertices, Triangles, Normals, UVs, Colors, Tangents, true, false);
+    MeshComponent->CreateMeshSection_LinearColor(0, Vertices, Triangles, Normals, UVs, Colors, Tangents, false, false);
+
+    // Chaos cannot simulate a movable body using a complex triangle mesh as its only collision shape.
+    // A bounded convex hull keeps detached voxel groups physical without turning every microvoxel into a rigid body.
+    if (Vertices.Num() > 0)
+    {
+        FBox LocalBounds(EForceInit::ForceInit);
+        for (const FVector& Vertex : Vertices) LocalBounds += Vertex;
+        const FVector Min = LocalBounds.Min;
+        const FVector Max = LocalBounds.Max;
+        TArray<FVector> Convex;
+        Convex.Reserve(8);
+        Convex.Add(FVector(Min.X, Min.Y, Min.Z));
+        Convex.Add(FVector(Max.X, Min.Y, Min.Z));
+        Convex.Add(FVector(Max.X, Max.Y, Min.Z));
+        Convex.Add(FVector(Min.X, Max.Y, Min.Z));
+        Convex.Add(FVector(Min.X, Min.Y, Max.Z));
+        Convex.Add(FVector(Max.X, Min.Y, Max.Z));
+        Convex.Add(FVector(Max.X, Max.Y, Max.Z));
+        Convex.Add(FVector(Min.X, Max.Y, Max.Z));
+        MeshComponent->AddCollisionConvexMesh(Convex);
+    }
+
     MeshComponent->SetSimulatePhysics(true);
     MeshComponent->SetEnableGravity(true);
     MeshComponent->WakeAllRigidBodies();
