@@ -39,16 +39,24 @@ AVoxelPhysicsIsland::AVoxelPhysicsIsland()
     MeshComponent = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("VoxelPhysicsMesh"));
     SetRootComponent(MeshComponent);
     MeshComponent->bUseComplexAsSimpleCollision = false;
-    MeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+    MeshComponent->bUseAsyncCooking = true;
+    MeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     MeshComponent->SetCollisionObjectType(ECC_PhysicsBody);
     MeshComponent->SetCollisionResponseToAllChannels(ECR_Block);
+    MeshComponent->SetCanEverAffectNavigation(false);
     MeshComponent->SetLinearDamping(0.08f);
     MeshComponent->SetAngularDamping(0.25f);
 }
 
-void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWorld, const TArray<FIntVector>& Voxels)
+void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWorld, const TArray<FIntVector>& Voxels, bool bStartSimulating)
 {
     if (!SourceWorld || Voxels.Num() == 0 || !MeshComponent) return;
+
+    MeshComponent->SetSimulatePhysics(false);
+    MeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    MeshComponent->ClearAllMeshSections();
+    MeshComponent->ClearCollisionConvexMeshes();
+    SetActorHiddenInGame(!bStartSimulating);
 
     const float VoxelSize = SourceWorld->VoxelSizeCm;
     const float VoxelSizeMeters = VoxelSize / 100.0f;
@@ -145,6 +153,8 @@ void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWo
 
     if (AllVertices.Num() > 0)
     {
+        // One convex macro hull per prepared voxel group keeps the solver body count and contact graph tiny.
+        // The visual mesh can still contain thousands of voxels while physics sees only eight hull vertices.
         FBox LocalBounds(EForceInit::ForceInit);
         for (const FVector& Vertex : AllVertices) LocalBounds += Vertex;
         const FVector Min = LocalBounds.Min;
@@ -162,8 +172,20 @@ void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWo
         MeshComponent->AddCollisionConvexMesh(Convex);
     }
 
+    PreparedMassKg = FMath::Clamp(EstimatedMassKg, 1.0f, 500000.0f);
+    bPreparedForPhysics = AllVertices.Num() > 0;
+
+    if (bStartSimulating) ActivatePhysics();
+}
+
+void AVoxelPhysicsIsland::ActivatePhysics()
+{
+    if (!bPreparedForPhysics || !MeshComponent) return;
+
+    SetActorHiddenInGame(false);
+    MeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     MeshComponent->SetSimulatePhysics(true);
     MeshComponent->SetEnableGravity(true);
-    MeshComponent->SetMassOverrideInKg(NAME_None, FMath::Clamp(EstimatedMassKg, 1.0f, 250000.0f), true);
+    MeshComponent->SetMassOverrideInKg(NAME_None, PreparedMassKg, true);
     MeshComponent->WakeAllRigidBodies();
 }
