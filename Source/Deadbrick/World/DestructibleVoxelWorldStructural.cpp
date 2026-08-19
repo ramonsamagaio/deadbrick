@@ -1,164 +1,215 @@
 #include "World/DestructibleVoxelWorld.h"
 
-#include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "World/VoxelPhysicsIsland.h"
 
-void ADestructibleVoxelWorld::EvaluateStructuralGravity(const FVector& WorldCenter, float RadiusCm)
+namespace
 {
-    if (!bEnableStructuralGravity || !GetWorld() || MaxStructuralScanVoxels <= 0 || MaxPhysicsIslandVoxels <= 0) return;
-
-    const FIntVector Center = WorldToVoxel(WorldCenter);
-    const int32 RadiusV = FMath::Clamp(FMath::CeilToInt(RadiusCm / FMath::Max(1.0f, VoxelSizeCm)), 4, 96);
-    const int32 CandidateRadiusSq = RadiusV * RadiusV;
-    const FIntVector Directions[6] =
+    const FIntVector StructuralDirections[6] =
     {
         FIntVector(1,0,0), FIntVector(-1,0,0), FIntVector(0,1,0),
         FIntVector(0,-1,0), FIntVector(0,0,1), FIntVector(0,0,-1)
     };
 
-    TSet<FIntVector> Visited;
-    int32 CollapsedVoxels = 0;
-
-    for (int32 Z = -RadiusV; Z <= RadiusV; ++Z)
-    for (int32 Y = -RadiusV; Y <= RadiusV; ++Y)
-    for (int32 X = -RadiusV; X <= RadiusV; ++X)
+    bool IsStructuralAnchorMaterial(EDeadbrickVoxelMaterial Material)
     {
-        if (X * X + Y * Y + Z * Z > CandidateRadiusSq) continue;
+        return Material == EDeadbrickVoxelMaterial::Soil || Material == EDeadbrickVoxelMaterial::Asphalt;
+    }
+}
 
-        const FIntVector Start = Center + FIntVector(X, Y, Z);
-        if (Visited.Contains(Start)) continue;
+void ADestructibleVoxelWorld::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
 
-        FDeadbrickVoxel StartVoxel;
-        if (!GetVoxel(Start, StartVoxel)) continue;
-        if (StartVoxel.Material == EDeadbrickVoxelMaterial::Soil || StartVoxel.Material == EDeadbrickVoxelMaterial::Asphalt) continue;
+    // Keep expensive topology and mesh work out of the input callback. The player can fire without
+    // a full connected-component traversal and multiple chunk cooks occurring in that same frame.
+    ProcessStructuralQueries();
+    FlushDirtyChunkBudget();
+}
 
-        TArray<FIntVector> Queue;
-        TArray<FIntVector> Component;
-        TMap<int32, int32> LayerCounts;
-        Queue.Reserve(FMath::Min(MaxStructuralScanVoxels, 8192));
-        Component.Reserve(FMath::Min(MaxStructuralScanVoxels, 8192));
-        Queue.Add(Start);
-        Visited.Add(Start);
+void ADestructibleVoxelWorld::QueueStructuralCheckFromDestroyed(const TArray<FIntVector>& DestroyedCells)
+{
+    if (!bEnableStructuralGravity || DestroyedCells.Num() == 0) return;
 
-        int32 ReadIndex = 0;
-        bool bTouchesGround = false;
-        bool bHitScanLimit = false;
-        int32 MinZ = Start.Z;
-        int32 MaxZ = Start.Z;
-
-        while (ReadIndex < Queue.Num())
+    TSet<FIntVector> UniqueSeeds;
+    for (const FIntVector& Destroyed : DestroyedCells)
+    {
+        for (const FIntVector& Direction : StructuralDirections)
         {
-            const FIntVector Current = Queue[ReadIndex++];
-            FDeadbrickVoxel CurrentVoxel;
-            if (!GetVoxel(Current, CurrentVoxel)) continue;
-            if (CurrentVoxel.Material == EDeadbrickVoxelMaterial::Soil || CurrentVoxel.Material == EDeadbrickVoxelMaterial::Asphalt) continue;
+            const FIntVector Neighbor = Destroyed + Direction;
+            FDeadbrickVoxel Voxel;
+            if (!GetVoxel(Neighbor, Voxel)) continue;
+            if (IsStructuralAnchorMaterial(Voxel.Material)) continue;
+            UniqueSeeds.Add(Neighbor);
+        }
+    }
 
-            Component.Add(Current);
-            LayerCounts.FindOrAdd(Current.Z) += 1;
-            MinZ = FMath::Min(MinZ, Current.Z);
-            MaxZ = FMath::Max(MaxZ, Current.Z);
+    if (UniqueSeeds.Num() == 0) return;
 
-            if (Current.Z <= 0)
-            {
-                bTouchesGround = true;
-            }
-            else
-            {
-                FDeadbrickVoxel Below;
-                if (GetVoxel(Current + FIntVector(0,0,-1), Below) &&
-                    (Below.Material == EDeadbrickVoxelMaterial::Soil || Below.Material == EDeadbrickVoxelMaterial::Asphalt))
-                {
-                    bTouchesGround = true;
-                }
-            }
+    FStructuralQueryState Query;
+    Query.Seeds = UniqueSeeds.Array();
+    StructuralQueries.Add(MoveTemp(Query));
+}
 
-            if (Component.Num() >= MaxStructuralScanVoxels)
+void ADestructibleVoxelWorld::EvaluateStructuralGravity(const FVector& WorldCenter, float RadiusCm)
+{
+    if (!bEnableStructuralGravity) return;
+
+    // Compatibility path for explosions/tools. It only gathers nearby starting points; connectivity
+    // itself is processed later under the per-frame budget. Firearms no longer invoke a second scan.
+    const FIntVector Center = WorldToVoxel(WorldCenter);
+    const int32 RequestedRadius = FMath::CeilToInt(RadiusCm / FMath::Max(1.0f, VoxelSizeCm));
+    const int32 RadiusV = FMath::Clamp(RequestedRadius, 1, 8);
+    const int32 RadiusSq = RadiusV * RadiusV;
+
+    TSet<FIntVector> UniqueSeeds;
+    for (int32 Z = -RadiusV; Z <= RadiusV && UniqueSeeds.Num() < 512; ++Z)
+    for (int32 Y = -RadiusV; Y <= RadiusV && UniqueSeeds.Num() < 512; ++Y)
+    for (int32 X = -RadiusV; X <= RadiusV && UniqueSeeds.Num() < 512; ++X)
+    {
+        if (X * X + Y * Y + Z * Z > RadiusSq) continue;
+        const FIntVector Candidate = Center + FIntVector(X, Y, Z);
+        FDeadbrickVoxel Voxel;
+        if (!GetVoxel(Candidate, Voxel)) continue;
+        if (IsStructuralAnchorMaterial(Voxel.Material)) continue;
+        UniqueSeeds.Add(Candidate);
+    }
+
+    if (UniqueSeeds.Num() == 0) return;
+
+    FStructuralQueryState Query;
+    Query.Seeds = UniqueSeeds.Array();
+    StructuralQueries.Add(MoveTemp(Query));
+}
+
+void ADestructibleVoxelWorld::ResolveStructuralGravityNear(const FVector& WorldCenter, float RadiusCm)
+{
+    EvaluateStructuralGravity(WorldCenter, RadiusCm);
+}
+
+void ADestructibleVoxelWorld::ProcessStructuralQueries()
+{
+    int32 WorkRemaining = FMath::Max(1, StructuralWorkBudgetPerFrame);
+
+    while (WorkRemaining > 0 && StructuralQueries.Num() > 0)
+    {
+        FStructuralQueryState& Query = StructuralQueries[0];
+
+        if (!Query.bComponentActive)
+        {
+            bool bStarted = false;
+            while (Query.SeedIndex < Query.Seeds.Num())
             {
-                bHitScanLimit = true;
+                const FIntVector Seed = Query.Seeds[Query.SeedIndex++];
+                if (Query.Visited.Contains(Seed)) continue;
+
+                FDeadbrickVoxel SeedVoxel;
+                if (!GetVoxel(Seed, SeedVoxel)) continue;
+                if (IsStructuralAnchorMaterial(SeedVoxel.Material)) continue;
+
+                Query.ResetComponent();
+                Query.bComponentActive = true;
+                Query.Queue.Add(Seed);
+                Query.Visited.Add(Seed);
+                bStarted = true;
                 break;
             }
 
-            for (const FIntVector& Direction : Directions)
+            if (!bStarted)
+            {
+                StructuralQueries.RemoveAt(0, 1, EAllowShrinking::No);
+                continue;
+            }
+        }
+
+        while (Query.bComponentActive &&
+               Query.QueueReadIndex < Query.Queue.Num() &&
+               WorkRemaining > 0 &&
+               !Query.bGrounded &&
+               !Query.bHitScanLimit)
+        {
+            const FIntVector Current = Query.Queue[Query.QueueReadIndex++];
+            --WorkRemaining;
+
+            FDeadbrickVoxel CurrentVoxel;
+            if (!GetVoxel(Current, CurrentVoxel)) continue;
+
+            if (Current.Z <= 0 || IsStructuralAnchorMaterial(CurrentVoxel.Material))
+            {
+                Query.bGrounded = true;
+                break;
+            }
+
+            Query.Component.Add(Current);
+            if (Query.Component.Num() >= MaxStructuralScanVoxels)
+            {
+                // A very large component is deliberately treated as anchored/unsolved in this pass.
+                // Never turn an entire tower into tens of thousands of rigid bodies from one bullet.
+                Query.bHitScanLimit = true;
+                break;
+            }
+
+            for (const FIntVector& Direction : StructuralDirections)
             {
                 const FIntVector Neighbor = Current + Direction;
-                if (Visited.Contains(Neighbor)) continue;
+                if (Query.Visited.Contains(Neighbor)) continue;
 
                 FDeadbrickVoxel NeighborVoxel;
                 if (!GetVoxel(Neighbor, NeighborVoxel)) continue;
-                if (NeighborVoxel.Material == EDeadbrickVoxelMaterial::Soil || NeighborVoxel.Material == EDeadbrickVoxelMaterial::Asphalt) continue;
 
-                Visited.Add(Neighbor);
-                Queue.Add(Neighbor);
-            }
-        }
-
-        if (Component.Num() == 0) continue;
-
-        int32 FailureZ = bTouchesGround ? MAX_int32 : MinZ;
-
-        if (bTouchesGround)
-        {
-            int32 VoxelsAbove = Component.Num();
-            for (int32 LayerZ = MinZ; LayerZ <= MaxZ; ++LayerZ)
-            {
-                const int32 LayerCount = LayerCounts.FindRef(LayerZ);
-                VoxelsAbove -= LayerCount;
-                if (VoxelsAbove <= 0) break;
-
-                const int32 RequiredSupport = FMath::Max(
-                    1,
-                    FMath::CeilToInt((float)VoxelsAbove / FMath::Max(1.0f, SupportCapacityPerGroundVoxel)));
-
-                if (LayerCount < RequiredSupport)
+                Query.Visited.Add(Neighbor);
+                if (Neighbor.Z <= 0 || IsStructuralAnchorMaterial(NeighborVoxel.Material))
                 {
-                    FailureZ = LayerZ;
+                    Query.bGrounded = true;
                     break;
                 }
+
+                Query.Queue.Add(Neighbor);
             }
         }
 
-        if (FailureZ == MAX_int32)
+        if (Query.bGrounded)
         {
-            if (bHitScanLimit)
-            {
-                UE_LOG(LogTemp, Warning,
-                    TEXT("DEADBRICK structural scan reached %d voxels on a supported component."),
-                    MaxStructuralScanVoxels);
-            }
+            Query.ResetComponent();
             continue;
         }
 
-        TArray<FIntVector> Detached;
-        Detached.Reserve(Component.Num());
-        for (const FIntVector& Cell : Component)
+        if (Query.bHitScanLimit)
         {
-            if (!bTouchesGround || Cell.Z >= FailureZ) Detached.Add(Cell);
+            UE_LOG(LogTemp, VeryVerbose,
+                TEXT("DEADBRICK structural query kept large component static after %d visited voxels."),
+                Query.Component.Num());
+            Query.ResetComponent();
+            continue;
         }
-        if (Detached.Num() == 0) continue;
 
-        // Build the dynamic fragments while the source cells still exist, so the fragment mesh can
-        // read the original material of every voxel. Then remove the static cells from the world.
-        SpawnDetachedComponentAsPhysics(Detached);
-
-        BeginBulkEdit();
-        for (const FIntVector& Cell : Detached)
+        if (Query.bComponentActive && Query.QueueReadIndex >= Query.Queue.Num())
         {
-            SetVoxel(Cell, EDeadbrickVoxelMaterial::Air, 0);
+            if (Query.Component.Num() > 0 && Query.Component.Num() <= MaxDetachedComponentVoxels)
+            {
+                // Build the rigid fragment while source material cells still exist, then remove the
+                // anchored representation. This is the anchored -> unanchored transition.
+                const TArray<FIntVector> Detached = Query.Component;
+                SpawnDetachedComponentAsPhysics(Detached);
+
+                BeginBulkEdit();
+                for (const FIntVector& Cell : Detached)
+                    SetVoxel(Cell, EDeadbrickVoxelMaterial::Air, 0);
+                EndBulkEdit();
+
+                UE_LOG(LogTemp, Display,
+                    TEXT("DEADBRICK UNANCHORED: %d voxel component converted to physics."),
+                    Detached.Num());
+            }
+            else if (Query.Component.Num() > MaxDetachedComponentVoxels)
+            {
+                UE_LOG(LogTemp, VeryVerbose,
+                    TEXT("DEADBRICK unanchored component has %d voxels; kept static to stay within physics budget."),
+                    Query.Component.Num());
+            }
+
+            Query.ResetComponent();
         }
-        EndBulkEdit();
-
-        CollapsedVoxels += Detached.Num();
-
-        UE_LOG(LogTemp, Display,
-            TEXT("DEADBRICK STRUCTURAL FAILURE: %d voxels detached at Z=%d (component=%d, ground=%s, scanLimit=%s)"),
-            Detached.Num(), FailureZ, Component.Num(), bTouchesGround ? TEXT("yes") : TEXT("no"), bHitScanLimit ? TEXT("yes") : TEXT("no"));
-    }
-
-    if (CollapsedVoxels > 0 && GEngine)
-    {
-        GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Orange,
-            FString::Printf(TEXT("STRUCTURAL COLLAPSE: %d voxels detached into physics fragments"), CollapsedVoxels));
     }
 }
 
