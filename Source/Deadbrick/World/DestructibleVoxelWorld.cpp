@@ -1,10 +1,26 @@
 #include "World/DestructibleVoxelWorld.h"
-#include "World/VoxelPhysicsIsland.h"
+
 #include "Items/DeadbrickPickupItem.h"
-#include "ProceduralMeshComponent.h"
+#include "Reference/ReferenceAssetResolver.h"
+#include "World/VoxelPhysicsIsland.h"
 #include "Components/SceneComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/World.h"
+#include "Materials/MaterialInterface.h"
+#include "ProceduralMeshComponent.h"
+
+namespace
+{
+    struct FDeadbrickMeshBuffers
+    {
+        TArray<FVector> Vertices;
+        TArray<int32> Triangles;
+        TArray<FVector> Normals;
+        TArray<FVector2D> UVs;
+        TArray<FLinearColor> Colors;
+        TArray<FProcMeshTangent> Tangents;
+    };
+}
 
 ADestructibleVoxelWorld::ADestructibleVoxelWorld()
 {
@@ -92,6 +108,33 @@ uint8 ADestructibleVoxelWorld::DefaultIntegrityFor(EDeadbrickVoxelMaterial Mater
     }
 }
 
+UMaterialInterface* ADestructibleVoxelWorld::ResolveSurfaceMaterial(EDeadbrickVoxelMaterial Material)
+{
+    if (MaterialResolutionAttempted.Contains(Material))
+    {
+        if (const TObjectPtr<UMaterialInterface>* Found = MaterialCache.Find(Material)) return Found->Get();
+        return nullptr;
+    }
+
+    MaterialResolutionAttempted.Add(Material);
+    TArray<FString> Keywords;
+    switch (Material)
+    {
+        case EDeadbrickVoxelMaterial::Asphalt: Keywords = {TEXT("asphalt"), TEXT("road"), TEXT("path")}; break;
+        case EDeadbrickVoxelMaterial::Concrete: Keywords = {TEXT("concrete"), TEXT("cement"), TEXT("stone")}; break;
+        case EDeadbrickVoxelMaterial::Brick: Keywords = {TEXT("brick"), TEXT("masonry"), TEXT("stone")}; break;
+        case EDeadbrickVoxelMaterial::Glass: Keywords = {TEXT("glass"), TEXT("window")}; break;
+        case EDeadbrickVoxelMaterial::Wood: Keywords = {TEXT("wood"), TEXT("plank"), TEXT("timber")}; break;
+        case EDeadbrickVoxelMaterial::Metal: Keywords = {TEXT("metal"), TEXT("iron"), TEXT("steel")}; break;
+        case EDeadbrickVoxelMaterial::Soil: Keywords = {TEXT("soil"), TEXT("dirt"), TEXT("ground"), TEXT("earth")}; break;
+        default: return nullptr;
+    }
+
+    UMaterialInterface* Resolved = DeadbrickReferenceAssets::FindMaterial(Keywords);
+    MaterialCache.Add(Material, Resolved);
+    return Resolved;
+}
+
 void ADestructibleVoxelWorld::SetVoxel(const FIntVector& Voxel, EDeadbrickVoxelMaterial Material, uint8 Integrity)
 {
     const FIntVector ChunkCoord = ToChunkCoord(Voxel);
@@ -126,10 +169,7 @@ void ADestructibleVoxelWorld::EndBulkEdit()
     {
         const TArray<FIntVector> Pending = DirtyChunks.Array();
         DirtyChunks.Reset();
-        for (const FIntVector& ChunkCoord : Pending)
-        {
-            RebuildChunk(ChunkCoord);
-        }
+        for (const FIntVector& ChunkCoord : Pending) RebuildChunk(ChunkCoord);
     }
 }
 
@@ -177,11 +217,7 @@ int32 ADestructibleVoxelWorld::ApplySphereDamage(const FVector& WorldCenter, flo
     }
     EndBulkEdit();
 
-    if (Destroyed > 0 && bSpawnSalvageDrops)
-    {
-        SpawnSalvageDrops(WorldCenter, DestroyedByMaterial);
-    }
-
+    if (Destroyed > 0 && bSpawnSalvageDrops) SpawnSalvageDrops(WorldCenter, DestroyedByMaterial);
     if (Destroyed > 0 && bEnableStructuralGravity)
     {
         ResolveStructuralGravityNear(WorldCenter, FMath::Max(RadiusCm * 4.0f, VoxelSizeCm * 8.0f));
@@ -195,13 +231,9 @@ void ADestructibleVoxelWorld::SpawnSalvageDrops(const FVector& WorldCenter, cons
 
     FActorSpawnParameters SpawnParams;
     SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
     for (const TPair<EDeadbrickVoxelMaterial, int32>& Pair : DestroyedByMaterial)
     {
         if (Pair.Key == EDeadbrickVoxelMaterial::Air || Pair.Value <= 0) continue;
-
-        // Aggregate microvoxels into one physical item stack per material. The reference game treats
-        // matter as useful physical loot; this keeps that behavior without spawning one rigid body per voxel.
         const int32 Quantity = FMath::Max(1, FMath::CeilToInt(Pair.Value / 3.0f));
         const FVector Offset(FMath::FRandRange(-18.0f, 18.0f), FMath::FRandRange(-18.0f, 18.0f), FMath::FRandRange(20.0f, 55.0f));
         if (ADeadbrickPickupItem* Pickup = GetWorld()->SpawnActor<ADeadbrickPickupItem>(
@@ -254,12 +286,11 @@ void ADestructibleVoxelWorld::ResolveStructuralGravityNear(const FVector& WorldC
             if (!GetVoxel(Current, CurrentVoxel)) continue;
 
             Component.Add(Current);
-            if (Current.Z <= 2 || CurrentVoxel.Material == EDeadbrickVoxelMaterial::Soil || CurrentVoxel.Material == EDeadbrickVoxelMaterial::Asphalt)
+            if (Current.Z <= 0 || CurrentVoxel.Material == EDeadbrickVoxelMaterial::Soil || CurrentVoxel.Material == EDeadbrickVoxelMaterial::Asphalt)
             {
                 bGrounded = true;
                 break;
             }
-
             if (Component.Num() >= MaxStructuralScanVoxels)
             {
                 bTooLarge = true;
@@ -270,25 +301,17 @@ void ADestructibleVoxelWorld::ResolveStructuralGravityNear(const FVector& WorldC
             {
                 const FIntVector Neighbor = Current + Direction;
                 if (Visited.Contains(Neighbor)) continue;
-
                 FDeadbrickVoxel NeighborVoxel;
                 if (!GetVoxel(Neighbor, NeighborVoxel)) continue;
-
                 Visited.Add(Neighbor);
                 Queue.Add(Neighbor);
             }
         }
 
-        if (bGrounded || bTooLarge || Component.Num() == 0 || Component.Num() > MaxPhysicsIslandVoxels)
-        {
-            continue;
-        }
+        if (bGrounded || bTooLarge || Component.Num() == 0 || Component.Num() > MaxPhysicsIslandVoxels) continue;
 
         BeginBulkEdit();
-        for (const FIntVector& Cell : Component)
-        {
-            SetVoxel(Cell, EDeadbrickVoxelMaterial::Air, 0);
-        }
+        for (const FIntVector& Cell : Component) SetVoxel(Cell, EDeadbrickVoxelMaterial::Air, 0);
         EndBulkEdit();
 
         FActorSpawnParameters SpawnParams;
@@ -303,10 +326,7 @@ void ADestructibleVoxelWorld::ResolveStructuralGravityNear(const FVector& WorldC
 
 UProceduralMeshComponent* ADestructibleVoxelWorld::FindOrCreateChunkMesh(const FIntVector& ChunkCoord)
 {
-    if (TObjectPtr<UProceduralMeshComponent>* Found = ChunkMeshes.Find(ChunkCoord))
-    {
-        return Found->Get();
-    }
+    if (TObjectPtr<UProceduralMeshComponent>* Found = ChunkMeshes.Find(ChunkCoord)) return Found->Get();
 
     UProceduralMeshComponent* Mesh = NewObject<UProceduralMeshComponent>(this);
     AddInstanceComponent(Mesh);
@@ -325,18 +345,11 @@ void ADestructibleVoxelWorld::RebuildChunk(const FIntVector& ChunkCoord)
 {
     FDeadbrickVoxelChunk* Chunk = Chunks.Find(ChunkCoord);
     UProceduralMeshComponent* Mesh = FindOrCreateChunkMesh(ChunkCoord);
-    if (!Chunk || Chunk->Voxels.Num() == 0)
-    {
-        Mesh->ClearAllMeshSections();
-        return;
-    }
+    Mesh->ClearAllMeshSections();
+    if (!Chunk || Chunk->Voxels.Num() == 0) return;
 
-    TArray<FVector> Vertices;
-    TArray<int32> Triangles;
-    TArray<FVector> Normals;
-    TArray<FVector2D> UVs;
-    TArray<FLinearColor> Colors;
-    TArray<FProcMeshTangent> Tangents;
+    TArray<FDeadbrickMeshBuffers> Buffers;
+    Buffers.SetNum(8);
 
     const FIntVector Directions[6] = {
         FIntVector(1,0,0), FIntVector(-1,0,0), FIntVector(0,1,0),
@@ -347,28 +360,28 @@ void ADestructibleVoxelWorld::RebuildChunk(const FIntVector& ChunkCoord)
         FVector(0,-1,0), FVector(0,0,1), FVector(0,0,-1)
     };
 
-    auto AddFace = [&](const FVector& CenterPos, int32 Face)
+    auto AddFace = [&](FDeadbrickMeshBuffers& Buffer, const FVector& CenterPos, int32 Face)
     {
         const FVector N = FaceNormals[Face];
         const FVector AxisA = FMath::Abs(N.Z) > 0.5f ? FVector(1,0,0) : FVector(0,0,1);
         const FVector AxisB = FVector::CrossProduct(N, AxisA);
         const float H = VoxelSizeCm * 0.5f;
         const FVector FaceCenter = CenterPos + N * H;
-        const int32 Base = Vertices.Num();
+        const int32 Base = Buffer.Vertices.Num();
 
-        Vertices.Add(FaceCenter + (-AxisA - AxisB) * H);
-        Vertices.Add(FaceCenter + ( AxisA - AxisB) * H);
-        Vertices.Add(FaceCenter + ( AxisA + AxisB) * H);
-        Vertices.Add(FaceCenter + (-AxisA + AxisB) * H);
+        Buffer.Vertices.Add(FaceCenter + (-AxisA - AxisB) * H);
+        Buffer.Vertices.Add(FaceCenter + ( AxisA - AxisB) * H);
+        Buffer.Vertices.Add(FaceCenter + ( AxisA + AxisB) * H);
+        Buffer.Vertices.Add(FaceCenter + (-AxisA + AxisB) * H);
+        Buffer.Triangles.Append({Base, Base + 1, Base + 2, Base, Base + 2, Base + 3});
 
-        Triangles.Append({Base, Base + 1, Base + 2, Base, Base + 2, Base + 3});
         for (int32 I = 0; I < 4; ++I)
         {
-            Normals.Add(N);
-            Colors.Add(FLinearColor::White);
-            Tangents.Add(FProcMeshTangent(AxisA, false));
+            Buffer.Normals.Add(N);
+            Buffer.Colors.Add(FLinearColor::White);
+            Buffer.Tangents.Add(FProcMeshTangent(AxisA, false));
         }
-        UVs.Append({FVector2D(0,0), FVector2D(1,0), FVector2D(1,1), FVector2D(0,1)});
+        Buffer.UVs.Append({FVector2D(0,0), FVector2D(1,0), FVector2D(1,1), FVector2D(0,1)});
     };
 
     for (int32 Z = 0; Z < ChunkSize; ++Z)
@@ -379,17 +392,41 @@ void ADestructibleVoxelWorld::RebuildChunk(const FIntVector& ChunkCoord)
         const FDeadbrickVoxel& Cell = Chunk->Voxels[ToIndex(Local)];
         if (!Cell.IsSolid()) continue;
 
+        const int32 MaterialIndex = (int32)Cell.Material;
+        if (!Buffers.IsValidIndex(MaterialIndex)) continue;
+        FDeadbrickMeshBuffers& Buffer = Buffers[MaterialIndex];
+
         const FIntVector Global = ChunkCoord * ChunkSize + Local;
         const FVector CenterPos((X + 0.5f) * VoxelSizeCm, (Y + 0.5f) * VoxelSizeCm, (Z + 0.5f) * VoxelSizeCm);
         for (int32 Face = 0; Face < 6; ++Face)
         {
             FDeadbrickVoxel Neighbor;
-            if (!GetVoxel(Global + Directions[Face], Neighbor))
-            {
-                AddFace(CenterPos, Face);
-            }
+            if (!GetVoxel(Global + Directions[Face], Neighbor)) AddFace(Buffer, CenterPos, Face);
         }
     }
 
-    Mesh->CreateMeshSection_LinearColor(0, Vertices, Triangles, Normals, UVs, Colors, Tangents, true, false);
+    int32 SectionIndex = 0;
+    for (int32 MaterialIndex = 1; MaterialIndex < Buffers.Num(); ++MaterialIndex)
+    {
+        FDeadbrickMeshBuffers& Buffer = Buffers[MaterialIndex];
+        if (Buffer.Vertices.Num() == 0) continue;
+
+        Mesh->CreateMeshSection_LinearColor(
+            SectionIndex,
+            Buffer.Vertices,
+            Buffer.Triangles,
+            Buffer.Normals,
+            Buffer.UVs,
+            Buffer.Colors,
+            Buffer.Tangents,
+            true,
+            false);
+
+        const EDeadbrickVoxelMaterial Material = (EDeadbrickVoxelMaterial)MaterialIndex;
+        if (UMaterialInterface* SurfaceMaterial = ResolveSurfaceMaterial(Material))
+        {
+            Mesh->SetMaterial(SectionIndex, SurfaceMaterial);
+        }
+        ++SectionIndex;
+    }
 }
