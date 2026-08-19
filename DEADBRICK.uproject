@@ -1,5 +1,6 @@
 {
   "FileVersion": 3,
+  "EngineAssociation": "5.8",
   "Category": "Games",
   "Description": "DEADBRICK - systemic first-person zombie survival RPG in a destructible micro-voxel city.",
   "Modules": [
