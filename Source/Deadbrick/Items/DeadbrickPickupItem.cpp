@@ -2,6 +2,7 @@
 
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Reference/ReferenceAssetResolver.h"
 #include "UObject/ConstructorHelpers.h"
 
 ADeadbrickPickupItem::ADeadbrickPickupItem()
@@ -24,23 +25,66 @@ ADeadbrickPickupItem::ADeadbrickPickupItem()
 void ADeadbrickPickupItem::InitializeFromVoxelMaterial(EDeadbrickVoxelMaterial Material, int32 InQuantity)
 {
     Quantity = FMath::Max(1, InQuantity);
+    TArray<FString> VisualKeywords;
+
     switch (Material)
     {
-        case EDeadbrickVoxelMaterial::Wood: ItemType = EDeadbrickItemType::WoodScrap; break;
-        case EDeadbrickVoxelMaterial::Brick: ItemType = EDeadbrickItemType::BrickFragment; break;
-        case EDeadbrickVoxelMaterial::Concrete: ItemType = EDeadbrickItemType::ConcreteRubble; break;
-        case EDeadbrickVoxelMaterial::Glass: ItemType = EDeadbrickItemType::GlassShard; break;
-        case EDeadbrickVoxelMaterial::Metal: ItemType = EDeadbrickItemType::MetalScrap; break;
-        case EDeadbrickVoxelMaterial::Asphalt: ItemType = EDeadbrickItemType::AsphaltChunk; break;
-        case EDeadbrickVoxelMaterial::Soil: ItemType = EDeadbrickItemType::SoilClump; break;
-        default: ItemType = EDeadbrickItemType::ConcreteRubble; break;
+        case EDeadbrickVoxelMaterial::Wood:
+            ItemType = EDeadbrickItemType::WoodScrap;
+            VisualKeywords = {TEXT("wood"), TEXT("log"), TEXT("plank")};
+            break;
+        case EDeadbrickVoxelMaterial::Brick:
+            ItemType = EDeadbrickItemType::BrickFragment;
+            VisualKeywords = {TEXT("brick"), TEXT("stone"), TEXT("rock")};
+            break;
+        case EDeadbrickVoxelMaterial::Concrete:
+            ItemType = EDeadbrickItemType::ConcreteRubble;
+            VisualKeywords = {TEXT("rock"), TEXT("stone"), TEXT("rubble")};
+            break;
+        case EDeadbrickVoxelMaterial::Glass:
+            ItemType = EDeadbrickItemType::GlassShard;
+            VisualKeywords = {TEXT("glass"), TEXT("crystal"), TEXT("shard")};
+            break;
+        case EDeadbrickVoxelMaterial::Metal:
+            ItemType = EDeadbrickItemType::MetalScrap;
+            VisualKeywords = {TEXT("metal"), TEXT("ore"), TEXT("ingot")};
+            break;
+        case EDeadbrickVoxelMaterial::Asphalt:
+            ItemType = EDeadbrickItemType::AsphaltChunk;
+            VisualKeywords = {TEXT("stone"), TEXT("rock")};
+            break;
+        case EDeadbrickVoxelMaterial::Soil:
+            ItemType = EDeadbrickItemType::SoilClump;
+            VisualKeywords = {TEXT("dirt"), TEXT("soil"), TEXT("earth")};
+            break;
+        default:
+            ItemType = EDeadbrickItemType::ConcreteRubble;
+            break;
     }
 
     if (MeshComponent)
     {
-        const float Scale = FMath::Clamp(0.08f + FMath::Sqrt((float)Quantity) * 0.025f, 0.10f, 0.28f);
-        MeshComponent->SetRelativeScale3D(FVector(Scale));
-        MeshComponent->AddImpulse(FVector(FMath::FRandRange(-60.0f, 60.0f), FMath::FRandRange(-60.0f, 60.0f), FMath::FRandRange(80.0f, 180.0f)), NAME_None, true);
+        if (VisualKeywords.Num() > 0)
+        {
+            if (UStaticMesh* ReferenceMesh = DeadbrickReferenceAssets::FindStaticMesh(VisualKeywords))
+            {
+                MeshComponent->SetStaticMesh(ReferenceMesh);
+            }
+        }
+
+        const float DesiredSizeCm = FMath::Clamp(10.0f + FMath::Sqrt((float)Quantity) * 3.0f, 12.0f, 34.0f);
+        if (UStaticMesh* CurrentMesh = MeshComponent->GetStaticMesh())
+        {
+            const FVector SourceSize = CurrentMesh->GetBounds().BoxExtent * 2.0f;
+            const float Longest = FMath::Max3(SourceSize.X, SourceSize.Y, SourceSize.Z);
+            const float UniformScale = Longest > 1.0f ? DesiredSizeCm / Longest : 0.12f;
+            MeshComponent->SetRelativeScale3D(FVector(UniformScale));
+        }
+
+        MeshComponent->AddImpulse(FVector(
+            FMath::FRandRange(-60.0f, 60.0f),
+            FMath::FRandRange(-60.0f, 60.0f),
+            FMath::FRandRange(80.0f, 180.0f)), NAME_None, true);
     }
 }
 
