@@ -6,7 +6,7 @@ public class DeadbrickEditorTarget : TargetRules
     public DeadbrickEditorTarget(TargetInfo Target) : base(Target)
     {
         Type = TargetType.Editor;
-        DefaultBuildSettings = BuildSettingsVersion.V5;
+        DefaultBuildSettings = BuildSettingsVersion.Latest;
         IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
         ExtraModuleNames.Add("Deadbrick");
     }
