@@ -18,15 +18,28 @@ public:
     ADeadbrickCharacter();
     virtual void Tick(float DeltaSeconds) override;
     virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+    virtual float TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly) TObjectPtr<UCameraComponent> FirstPersonCamera;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly) TObjectPtr<UFirearmComponent> Firearm;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Survival")
+    float MaxHealth = 100.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category="Survival")
+    float Health = 100.0f;
 
     UPROPERTY(BlueprintReadOnly, Category="Inventory")
     TMap<EDeadbrickItemType, int32> Inventory;
 
     UFUNCTION(BlueprintPure, Category="Inventory")
     int32 GetInventoryQuantity(EDeadbrickItemType ItemType) const;
+
+    UFUNCTION(BlueprintCallable, Category="Inventory")
+    void AddInventoryItem(EDeadbrickItemType ItemType, int32 Quantity);
+
+    UFUNCTION(BlueprintCallable, Category="Inventory")
+    bool ConsumeInventoryItem(EDeadbrickItemType ItemType, int32 Quantity);
 
 protected:
     virtual void BeginPlay() override;
@@ -39,6 +52,7 @@ private:
     FVector SafeSpawnLocation = FVector::ZeroVector;
     FRotator SafeSpawnRotation = FRotator::ZeroRotator;
     bool bHasSafeSpawn = false;
+    bool bDead = false;
 
     float WalkSpeed = 500.0f;
     float SprintSpeed = 760.0f;
@@ -55,4 +69,5 @@ private:
     void TryApplyReferenceVisuals();
     void UpdateReferenceAnimation();
     void RecoverFromFall();
+    void RespawnAtSafeLocation();
 };
