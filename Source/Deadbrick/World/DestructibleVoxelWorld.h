@@ -49,6 +49,12 @@ public:
     UFUNCTION(BlueprintCallable, Category="Voxel")
     int32 ApplySphereDamage(const FVector& WorldCenter, float RadiusCm, float Damage);
 
+    UFUNCTION(BlueprintCallable, Category="Voxel|Save")
+    void StartRuntimePersistence();
+
+    void ExportRuntimeEdits(TArray<FDeadbrickVoxelEditRecord>& OutEdits) const;
+    void ApplyRuntimeEdits(const TArray<FDeadbrickVoxelEditRecord>& Edits);
+
     bool GetVoxel(const FIntVector& Voxel, FDeadbrickVoxel& OutVoxel) const;
     void BeginBulkEdit();
     void EndBulkEdit();
@@ -58,6 +64,8 @@ private:
     TMap<FIntVector, TObjectPtr<UProceduralMeshComponent>> ChunkMeshes;
     TMap<EDeadbrickVoxelMaterial, TObjectPtr<UMaterialInterface>> MaterialCache;
     TSet<EDeadbrickVoxelMaterial> MaterialResolutionAttempted;
+    TMap<FIntVector, FDeadbrickVoxel> RuntimeEdits;
+    bool bRecordRuntimeEdits = false;
 
     TSet<FIntVector> DirtyChunks;
     int32 BulkEditDepth = 0;
