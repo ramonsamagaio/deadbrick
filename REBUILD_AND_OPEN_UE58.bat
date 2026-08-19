@@ -6,7 +6,10 @@ set "PROJECT=%PROJECT_DIR%DEADBRICK.uproject"
 set "ENGINE_DIR=C:\Program Files\Epic Games\UE_5.8"
 set "BUILD_BAT=%ENGINE_DIR%\Engine\Build\BatchFiles\Build.bat"
 set "EDITOR_EXE=%ENGINE_DIR%\Engine\Binaries\Win64\UnrealEditor.exe"
+set "EDITOR_CMD=%ENGINE_DIR%\Engine\Binaries\Win64\UnrealEditor-Cmd.exe"
 set "CLEAN_SCRIPT=%PROJECT_DIR%CLEAN_INVALID_REFERENCE_CONTENT.ps1"
+set "REFERENCE_EXPORT=%PROJECT_DIR%ReferenceExported"
+set "REFERENCE_IMPORT_SCRIPT=%PROJECT_DIR%Tools\import_lotl_reference.py"
 
 echo ============================================================
 echo DEADBRICK - clean rebuild for Unreal Engine 5.8
@@ -67,6 +70,26 @@ if errorlevel 1 (
     echo ============================================================
     pause
     exit /b 1
+)
+
+set "HAS_REFERENCE_EXPORT=0"
+if exist "%REFERENCE_EXPORT%" (
+    dir /S /B "%REFERENCE_EXPORT%\*.glb" 2>NUL | findstr /R "." >NUL && set "HAS_REFERENCE_EXPORT=1"
+    dir /S /B "%REFERENCE_EXPORT%\*.gltf" 2>NUL | findstr /R "." >NUL && set "HAS_REFERENCE_EXPORT=1"
+    dir /S /B "%REFERENCE_EXPORT%\*.png" 2>NUL | findstr /R "." >NUL && set "HAS_REFERENCE_EXPORT=1"
+)
+
+if "%HAS_REFERENCE_EXPORT%"=="1" if exist "%REFERENCE_IMPORT_SCRIPT%" if exist "%EDITOR_CMD%" (
+    echo.
+    echo Importing editor-safe Lay of the Land reference exports...
+    "%EDITOR_CMD%" "%PROJECT%" -run=pythonscript -script="%REFERENCE_IMPORT_SCRIPT%" -unattended -nop4 -nosplash
+    if errorlevel 1 (
+        echo WARNING: LOTL editor import returned an error.
+        echo The DEADBRICK build succeeded, so the editor will still open.
+        echo Check Saved\Logs and Saved\LOTL_EDITOR_IMPORT.txt.
+    ) else (
+        echo LOTL editor-safe import completed.
+    )
 )
 
 echo.
