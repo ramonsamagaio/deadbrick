@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "TimerManager.h"
 #include "DeadbrickEnvironmentSubsystem.generated.h"
 
 USTRUCT(BlueprintType)
