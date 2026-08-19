@@ -4,6 +4,7 @@
 #include "GameFramework/Character.h"
 #include "ZombieCharacter.generated.h"
 
+class UAnimSequence;
 class UStaticMeshComponent;
 
 UCLASS()
@@ -31,10 +32,17 @@ protected:
     virtual void BeginPlay() override;
 
 private:
+    UPROPERTY(Transient) TObjectPtr<UAnimSequence> IdleAnimation;
+    UPROPERTY(Transient) TObjectPtr<UAnimSequence> WalkAnimation;
+    UPROPERTY(Transient) TObjectPtr<UAnimSequence> CurrentAnimation;
+
     TWeakObjectPtr<AActor> CurrentTarget;
     FVector MoveTarget = FVector::ZeroVector;
     bool bHasMoveTarget = false;
     float RetargetTimer = 0.0f;
     float AttackTimer = 0.0f;
+
     void AcquireTarget();
+    void TryApplyReferenceVisuals();
+    void UpdateReferenceAnimation();
 };
