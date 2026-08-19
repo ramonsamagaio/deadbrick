@@ -6,6 +6,7 @@
 #include "ReferenceDestructibleProp.generated.h"
 
 class ADestructibleVoxelWorld;
+class UBoxComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
 
@@ -25,6 +26,9 @@ public:
         EDeadbrickVoxelMaterial InBreakMaterial,
         const FVector& TargetDimensionsCm,
         float InHealth = 80.0f);
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Reference Prop")
+    TObjectPtr<UBoxComponent> CollisionComponent;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Reference Prop")
     TObjectPtr<UStaticMeshComponent> MeshComponent;
