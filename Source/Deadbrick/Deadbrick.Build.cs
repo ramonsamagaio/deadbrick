@@ -19,7 +19,8 @@ public class Deadbrick : ModuleRules
             "GameplayTasks",
             "NavigationSystem",
             "ProceduralMeshComponent",
-            "AssetRegistry"
+            "AssetRegistry",
+            "PhysX5"
         });
     }
 }
