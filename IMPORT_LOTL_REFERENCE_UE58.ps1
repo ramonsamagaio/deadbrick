@@ -25,7 +25,7 @@ Write-Host "============================================================" -Foreg
 Write-Host ""
 
 if (Get-Process UnrealEditor -ErrorAction SilentlyContinue) {
-    Write-Host "Close Unreal Editor before importing reference content." -ForegroundColor Red
+    Write-Host "UnrealEditor.exe is still running. Close it before importing reference content." -ForegroundColor Red
     exit 10
 }
 
@@ -34,13 +34,8 @@ if (-not (Test-Path $UnrealPak)) {
     exit 11
 }
 
-if ([string]::IsNullOrWhiteSpace($ReferenceRoot)) {
-    $ReferenceRoot = Read-Host "Paste or drag the LayOfTheLand game folder, Content folder, or Paks folder here"
-}
-$ReferenceRoot = $ReferenceRoot.Trim().Trim('"')
-
 function Resolve-PakDirectory([string]$InputPath) {
-    if (-not (Test-Path $InputPath)) { return $null }
+    if ([string]::IsNullOrWhiteSpace($InputPath) -or -not (Test-Path $InputPath)) { return $null }
     $Resolved = (Resolve-Path $InputPath).Path
 
     if ((Split-Path $Resolved -Leaf) -ieq "Paks") {
@@ -62,6 +57,30 @@ function Resolve-PakDirectory([string]$InputPath) {
     return $null
 }
 
+if ([string]::IsNullOrWhiteSpace($ReferenceRoot)) {
+    $AutoCandidates = @(
+        "C:\Program Files (x86)\Steam\steamapps\common\Lay of the Land\LayOfTheLand\Content\Paks",
+        "C:\Program Files (x86)\Steam\steamapps\common\Lay of the Land\LayOfTheLand",
+        "C:\Program Files\Steam\steamapps\common\Lay of the Land\LayOfTheLand\Content\Paks"
+    )
+
+    foreach ($Candidate in $AutoCandidates) {
+        $Detected = Resolve-PakDirectory $Candidate
+        if ($Detected) {
+            $ReferenceRoot = $Detected
+            Write-Host "Found LayOfTheLand automatically:" -ForegroundColor Green
+            Write-Host $ReferenceRoot -ForegroundColor Green
+            Write-Host ""
+            break
+        }
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($ReferenceRoot)) {
+    $ReferenceRoot = Read-Host "Paste or drag the LayOfTheLand game folder, Content folder, or Paks folder here"
+}
+$ReferenceRoot = $ReferenceRoot.Trim().Trim('"')
+
 $PakDir = Resolve-PakDirectory $ReferenceRoot
 if (-not $PakDir) {
     Write-Host "Could not locate the LayOfTheLand Content\Paks directory from:" -ForegroundColor Red
@@ -72,8 +91,6 @@ if (-not $PakDir) {
 Write-Host "Pak directory: $PakDir" -ForegroundColor Green
 New-Item -ItemType Directory -Path $StageRoot,$Stage,$LegacyDir,$LogDir,$ToolsDir,$ProjectContent -Force | Out-Null
 
-# Retoc is specifically designed for Unreal Engine IoStore (.utoc/.ucas) and can convert
-# modern Zen packages to legacy .uasset/.uexp packages. UnrealPak alone cannot do that conversion.
 function Ensure-Retoc {
     if (Test-Path $RetocExe) { return }
 
@@ -160,7 +177,6 @@ foreach ($File in $CookedFiles) {
     if ($Index -ge 0) {
         $Relative = $Normalized.Substring($Index + $Marker.Length)
     } else {
-        # retoc's legacy pak can mount directly at a game-relative path. Strip common mount prefixes.
         $Relative = $Normalized.Substring($Stage.Length).TrimStart('\')
         $Relative = $Relative -replace '^\.\.\\\.\.\\\.\.\\', ''
         $Relative = $Relative -replace '^LayOfTheLand\\Content\\', ''
@@ -180,7 +196,6 @@ foreach ($File in $CookedFiles) {
     if (-not [string]::IsNullOrWhiteSpace($FirstSegment)) { [void]$TopLevelEntries.Add($FirstSegment) }
 }
 
-# Keep the large extracted/reference payload local while source code and manifests remain versioned.
 $GitExclude = Join-Path $ProjectRoot ".git\info\exclude"
 if (Test-Path (Split-Path -Parent $GitExclude)) {
     $Existing = if (Test-Path $GitExclude) { @(Get-Content $GitExclude) } else { @() }
