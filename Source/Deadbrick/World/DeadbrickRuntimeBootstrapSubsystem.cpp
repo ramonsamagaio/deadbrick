@@ -3,6 +3,7 @@
 #include "World/ProceduralCityGenerator.h"
 #include "Player/DeadbrickCharacter.h"
 #include "AI/ZombieCharacter.h"
+#include "Camera/CameraComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -74,6 +75,16 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
     CityGenerator->FloorHeightMeters = 3.0f;
     CityGenerator->GenerateCity();
 
+    // Keep a guaranteed empty spawn column above the first road intersection. The road cell at Z=0
+    // remains intact, while any accidental generated geometry around the capsule/camera is removed.
+    const FIntVector SpawnVoxel = VoxelWorld->WorldToVoxel(PrototypeOrigin + FVector(400.0f, 400.0f, 240.0f));
+    VoxelWorld->BeginBulkEdit();
+    for (int32 Z = 1; Z <= 28; ++Z)
+    for (int32 Y = -7; Y <= 7; ++Y)
+    for (int32 X = -7; X <= 7; ++X)
+        VoxelWorld->SetVoxel(FIntVector(SpawnVoxel.X + X, SpawnVoxel.Y + Y, Z), EDeadbrickVoxelMaterial::Air, 0);
+    VoxelWorld->EndBulkEdit();
+
     // Everything before this point is deterministic baseline generation. Only gameplay changes after it
     // become save deltas, so saves stay tiny even when the city eventually spans many streamed districts.
     VoxelWorld->StartRuntimePersistence();
@@ -118,8 +129,8 @@ void UDeadbrickRuntimeBootstrapSubsystem::EnsurePlayer()
 
         DeadbrickPawn = World->SpawnActor<ADeadbrickCharacter>(
             ADeadbrickCharacter::StaticClass(),
-            PrototypeOrigin + FVector(400.0f, 400.0f, 240.0f),
-            FRotator(0.0f, 45.0f, 0.0f),
+            PrototypeOrigin + FVector(400.0f, 400.0f, 600.0f),
+            FRotator::ZeroRotator,
             SpawnParams);
 
         if (!DeadbrickPawn)
@@ -131,17 +142,43 @@ void UDeadbrickRuntimeBootstrapSubsystem::EnsurePlayer()
         PC->Possess(DeadbrickPawn);
     }
 
-    DeadbrickPawn->SetActorLocation(
-        PrototypeOrigin + FVector(400.0f, 400.0f, 240.0f),
+    const FRotator SpawnRotation(0.0f, 45.0f, 0.0f);
+    FVector SpawnLocation = PrototypeOrigin + FVector(400.0f, 400.0f, 220.0f);
+
+    // Resolve the actual road surface instead of assuming a fixed Z. This prevents spawning inside a
+    // procedural surface and also makes the same bootstrap work after terrain/city generation changes.
+    FHitResult GroundHit;
+    FCollisionQueryParams GroundParams(SCENE_QUERY_STAT(DeadbrickSpawnGround), false, DeadbrickPawn);
+    const FVector TraceStart = PrototypeOrigin + FVector(400.0f, 400.0f, 2000.0f);
+    const FVector TraceEnd = PrototypeOrigin + FVector(400.0f, 400.0f, -1000.0f);
+    if (World->LineTraceSingleByChannel(GroundHit, TraceStart, TraceEnd, ECC_Visibility, GroundParams))
+        SpawnLocation.Z = GroundHit.ImpactPoint.Z + 110.0f;
+
+    DeadbrickPawn->SetActorLocationAndRotation(
+        SpawnLocation,
+        SpawnRotation,
         false,
         nullptr,
         ETeleportType::TeleportPhysics);
-    DeadbrickPawn->SetActorRotation(FRotator(0.0f, 45.0f, 0.0f), ETeleportType::TeleportPhysics);
+    DeadbrickPawn->SetSafeSpawnTransform(SpawnLocation, SpawnRotation);
+
+    // The FPS camera uses pawn control rotation. Setting only the actor rotation can leave the camera
+    // inheriting an arbitrary spectator/editor pitch, which can result in an apparently black viewport.
+    PC->SetControlRotation(SpawnRotation);
+    if (DeadbrickPawn->FirstPersonCamera)
+        DeadbrickPawn->FirstPersonCamera->Activate(true);
+    PC->SetViewTargetWithBlend(DeadbrickPawn, 0.0f);
 
     PC->SetInputMode(FInputModeGameOnly());
     PC->bShowMouseCursor = false;
 
-    ShowStatus(TEXT("WASD move | Shift sprint | Space jump | LMB shoot | R reload | E interact/collect | C craft | F5 save | F9 load"), FColor::Green);
+    UE_LOG(LogTemp, Display, TEXT("DEADBRICK FPS CAMERA READY | Pawn=%s | Camera=%s | Location=%s | Rotation=%s"),
+        *GetNameSafe(DeadbrickPawn),
+        *GetNameSafe(DeadbrickPawn->FirstPersonCamera),
+        *SpawnLocation.ToCompactString(),
+        *SpawnRotation.ToCompactString());
+
+    ShowStatus(TEXT("FPS camera locked | WASD move | Shift sprint | Space jump | LMB shoot | R reload | E interact | C craft | F5 save | F9 load"), FColor::Green);
 }
 
 void UDeadbrickRuntimeBootstrapSubsystem::SpawnPrototypeZombies()
