@@ -8,6 +8,9 @@
 class UAnimSequence;
 class UCameraComponent;
 class UFirearmComponent;
+class USceneComponent;
+class USkeletalMeshComponent;
+class UStaticMeshComponent;
 
 UCLASS()
 class DEADBRICK_API ADeadbrickCharacter : public ACharacter
@@ -22,6 +25,21 @@ public:
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly) TObjectPtr<UCameraComponent> FirstPersonCamera;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly) TObjectPtr<UFirearmComponent> Firearm;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="First Person")
+    TObjectPtr<USceneComponent> ViewModelRoot;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="First Person")
+    TObjectPtr<USkeletalMeshComponent> FirstPersonArms;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="First Person")
+    TObjectPtr<UStaticMeshComponent> ViewWeapon;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="First Person")
+    TObjectPtr<UStaticMeshComponent> FallbackLeftArm;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="First Person")
+    TObjectPtr<UStaticMeshComponent> FallbackRightArm;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Survival")
     float MaxHealth = 100.0f;
@@ -59,6 +77,8 @@ private:
 
     float WalkSpeed = 500.0f;
     float SprintSpeed = 760.0f;
+    float ForwardInput = 0.0f;
+    float RightInput = 0.0f;
 
     void MoveForward(float Value);
     void MoveRight(float Value);
@@ -74,6 +94,7 @@ private:
     void QuickLoad();
     void TryApplyReferenceVisuals();
     void UpdateReferenceAnimation();
+    void UpdateGroundBraking();
     void RecoverFromFall();
     void RespawnAtSafeLocation();
 };
