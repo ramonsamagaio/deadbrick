@@ -1,7 +1,9 @@
 #include "World/DestructibleVoxelWorld.h"
+#include "World/VoxelPhysicsIsland.h"
 #include "ProceduralMeshComponent.h"
 #include "Components/SceneComponent.h"
 #include "Engine/CollisionProfile.h"
+#include "Engine/World.h"
 
 ADestructibleVoxelWorld::ADestructibleVoxelWorld()
 {
@@ -171,7 +173,102 @@ int32 ADestructibleVoxelWorld::ApplySphereDamage(const FVector& WorldCenter, flo
         }
     }
     EndBulkEdit();
+
+    if (Destroyed > 0 && bEnableStructuralGravity)
+    {
+        ResolveStructuralGravityNear(WorldCenter, FMath::Max(RadiusCm * 4.0f, VoxelSizeCm * 8.0f));
+    }
     return Destroyed;
+}
+
+void ADestructibleVoxelWorld::ResolveStructuralGravityNear(const FVector& WorldCenter, float RadiusCm)
+{
+    if (!GetWorld() || MaxStructuralScanVoxels <= 0 || MaxPhysicsIslandVoxels <= 0) return;
+
+    const FIntVector Center = WorldToVoxel(WorldCenter);
+    const int32 RadiusV = FMath::Clamp(FMath::CeilToInt(RadiusCm / VoxelSizeCm), 2, 64);
+    const FIntVector Directions[6] = {
+        FIntVector(1,0,0), FIntVector(-1,0,0), FIntVector(0,1,0),
+        FIntVector(0,-1,0), FIntVector(0,0,1), FIntVector(0,0,-1)
+    };
+
+    TSet<FIntVector> Visited;
+    const int32 CandidateRadiusSq = RadiusV * RadiusV;
+
+    for (int32 Z = -RadiusV; Z <= RadiusV; ++Z)
+    for (int32 Y = -RadiusV; Y <= RadiusV; ++Y)
+    for (int32 X = -RadiusV; X <= RadiusV; ++X)
+    {
+        if (X * X + Y * Y + Z * Z > CandidateRadiusSq) continue;
+        const FIntVector Start = Center + FIntVector(X, Y, Z);
+        if (Visited.Contains(Start)) continue;
+
+        FDeadbrickVoxel StartVoxel;
+        if (!GetVoxel(Start, StartVoxel)) continue;
+
+        TArray<FIntVector> Queue;
+        TArray<FIntVector> Component;
+        Queue.Reserve(FMath::Min(MaxStructuralScanVoxels, 1024));
+        Component.Reserve(FMath::Min(MaxPhysicsIslandVoxels, 512));
+        Queue.Add(Start);
+        Visited.Add(Start);
+        int32 ReadIndex = 0;
+        bool bGrounded = false;
+        bool bTooLarge = false;
+
+        while (ReadIndex < Queue.Num())
+        {
+            const FIntVector Current = Queue[ReadIndex++];
+            FDeadbrickVoxel CurrentVoxel;
+            if (!GetVoxel(Current, CurrentVoxel)) continue;
+
+            Component.Add(Current);
+            if (Current.Z <= 2 || CurrentVoxel.Material == EDeadbrickVoxelMaterial::Soil || CurrentVoxel.Material == EDeadbrickVoxelMaterial::Asphalt)
+            {
+                bGrounded = true;
+                break;
+            }
+
+            if (Component.Num() >= MaxStructuralScanVoxels)
+            {
+                bTooLarge = true;
+                break;
+            }
+
+            for (const FIntVector& Direction : Directions)
+            {
+                const FIntVector Neighbor = Current + Direction;
+                if (Visited.Contains(Neighbor)) continue;
+
+                FDeadbrickVoxel NeighborVoxel;
+                if (!GetVoxel(Neighbor, NeighborVoxel)) continue;
+
+                Visited.Add(Neighbor);
+                Queue.Add(Neighbor);
+            }
+        }
+
+        if (bGrounded || bTooLarge || Component.Num() == 0 || Component.Num() > MaxPhysicsIslandVoxels)
+        {
+            continue;
+        }
+
+        // This connected group lost every structural path to the ground. Remove it from the static voxel
+        // database and re-home the exact voxel cells as one simulated physics island.
+        BeginBulkEdit();
+        for (const FIntVector& Cell : Component)
+        {
+            SetVoxel(Cell, EDeadbrickVoxelMaterial::Air, 0);
+        }
+        EndBulkEdit();
+
+        FActorSpawnParameters SpawnParams;
+        SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        if (AVoxelPhysicsIsland* Island = GetWorld()->SpawnActor<AVoxelPhysicsIsland>(AVoxelPhysicsIsland::StaticClass(), FTransform::Identity, SpawnParams))
+        {
+            Island->InitializeFromVoxels(this, Component);
+        }
+    }
 }
 
 UProceduralMeshComponent* ADestructibleVoxelWorld::FindOrCreateChunkMesh(const FIntVector& ChunkCoord)
@@ -220,13 +317,13 @@ void ADestructibleVoxelWorld::RebuildChunk(const FIntVector& ChunkCoord)
         FVector(0,-1,0), FVector(0,0,1), FVector(0,0,-1)
     };
 
-    auto AddFace = [&](const FVector& Center, int32 Face)
+    auto AddFace = [&](const FVector& CenterPos, int32 Face)
     {
         const FVector N = FaceNormals[Face];
         const FVector AxisA = FMath::Abs(N.Z) > 0.5f ? FVector(1,0,0) : FVector(0,0,1);
         const FVector AxisB = FVector::CrossProduct(N, AxisA);
         const float H = VoxelSizeCm * 0.5f;
-        const FVector FaceCenter = Center + N * H;
+        const FVector FaceCenter = CenterPos + N * H;
         const int32 Base = Vertices.Num();
 
         Vertices.Add(FaceCenter + (-AxisA - AxisB) * H);
@@ -234,24 +331,14 @@ void ADestructibleVoxelWorld::RebuildChunk(const FIntVector& ChunkCoord)
         Vertices.Add(FaceCenter + ( AxisA + AxisB) * H);
         Vertices.Add(FaceCenter + (-AxisA + AxisB) * H);
 
-        Triangles.Add(Base);
-        Triangles.Add(Base + 1);
-        Triangles.Add(Base + 2);
-        Triangles.Add(Base);
-        Triangles.Add(Base + 2);
-        Triangles.Add(Base + 3);
-
+        Triangles.Append({Base, Base + 1, Base + 2, Base, Base + 2, Base + 3});
         for (int32 I = 0; I < 4; ++I)
         {
             Normals.Add(N);
             Colors.Add(FLinearColor::White);
             Tangents.Add(FProcMeshTangent(AxisA, false));
         }
-
-        UVs.Add(FVector2D(0,0));
-        UVs.Add(FVector2D(1,0));
-        UVs.Add(FVector2D(1,1));
-        UVs.Add(FVector2D(0,1));
+        UVs.Append({FVector2D(0,0), FVector2D(1,0), FVector2D(1,1), FVector2D(0,1)});
     };
 
     for (int32 Z = 0; Z < ChunkSize; ++Z)
@@ -263,13 +350,13 @@ void ADestructibleVoxelWorld::RebuildChunk(const FIntVector& ChunkCoord)
         if (!Cell.IsSolid()) continue;
 
         const FIntVector Global = ChunkCoord * ChunkSize + Local;
-        const FVector Center((X + 0.5f) * VoxelSizeCm, (Y + 0.5f) * VoxelSizeCm, (Z + 0.5f) * VoxelSizeCm);
+        const FVector CenterPos((X + 0.5f) * VoxelSizeCm, (Y + 0.5f) * VoxelSizeCm, (Z + 0.5f) * VoxelSizeCm);
         for (int32 Face = 0; Face < 6; ++Face)
         {
             FDeadbrickVoxel Neighbor;
             if (!GetVoxel(Global + Directions[Face], Neighbor))
             {
-                AddFace(Center, Face);
+                AddFace(CenterPos, Face);
             }
         }
     }
