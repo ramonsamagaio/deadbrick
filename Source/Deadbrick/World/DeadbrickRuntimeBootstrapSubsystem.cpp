@@ -8,6 +8,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
+#include "Reference/ReferenceAssetResolver.h"
 #include "TimerManager.h"
 
 bool UDeadbrickRuntimeBootstrapSubsystem::DoesSupportWorldType(const EWorldType::Type WorldType) const
@@ -20,6 +21,15 @@ void UDeadbrickRuntimeBootstrapSubsystem::OnWorldBeginPlay(UWorld& InWorld)
     Super::OnWorldBeginPlay(InWorld);
 
     ShowStatus(TEXT("DEADBRICK bootstrap active: building voxel prototype..."), FColor::Yellow);
+    if (DeadbrickReferenceAssets::HasCookedReferenceAssets())
+    {
+        ShowStatus(TEXT("DEADBRICK reference content detected: LOTL meshes/animations will be auto-bound."), FColor::Cyan);
+    }
+    else
+    {
+        ShowStatus(TEXT("DEADBRICK reference content NOT imported yet: run IMPORT_LOTL_REFERENCE_UE58.bat once."), FColor::Orange);
+    }
+
     BuildPrototypeWorld();
 
     PlayerSetupAttempts = 0;
@@ -70,7 +80,7 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
     CityGenerator->GenerateCity();
 
     SpawnPrototypeZombies();
-    ShowStatus(TEXT("DEADBRICK voxel prototype generated. Preparing FPS pawn..."), FColor::Green);
+    ShowStatus(TEXT("DEADBRICK voxel prototype generated. Buildings/roads are backed by destructible voxel cells."), FColor::Green);
 }
 
 void UDeadbrickRuntimeBootstrapSubsystem::EnsurePlayer()
@@ -135,7 +145,7 @@ void UDeadbrickRuntimeBootstrapSubsystem::EnsurePlayer()
     PC->SetInputMode(FInputModeGameOnly());
     PC->bShowMouseCursor = false;
 
-    ShowStatus(TEXT("DEADBRICK ACTIVE | WASD + mouse | LMB shoot | R reload"), FColor::Green);
+    ShowStatus(TEXT("DEADBRICK ACTIVE | WASD + mouse | LMB destroys voxels | R reload | fall recovery ON"), FColor::Green);
 }
 
 void UDeadbrickRuntimeBootstrapSubsystem::SpawnPrototypeZombies()
