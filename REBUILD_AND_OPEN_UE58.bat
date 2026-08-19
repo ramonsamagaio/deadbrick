@@ -9,7 +9,9 @@ set "EDITOR_EXE=%ENGINE_DIR%\Engine\Binaries\Win64\UnrealEditor.exe"
 set "EDITOR_CMD=%ENGINE_DIR%\Engine\Binaries\Win64\UnrealEditor-Cmd.exe"
 set "CLEAN_SCRIPT=%PROJECT_DIR%CLEAN_INVALID_REFERENCE_CONTENT.ps1"
 set "REFERENCE_EXPORT=%PROJECT_DIR%ReferenceExported"
+set "REFERENCE_EXPORT_SCRIPT=%PROJECT_DIR%EXPORT_LOTL_EDITOR_ASSETS.ps1"
 set "REFERENCE_IMPORT_SCRIPT=%PROJECT_DIR%Tools\import_lotl_reference.py"
+set "LOTL_LEGACY_PAK=%PROJECT_DIR%ReferenceExtracted\Legacy\LayOfTheLand_Legacy.pak"
 
 echo ============================================================
 echo DEADBRICK - clean rebuild for Unreal Engine 5.8
@@ -53,6 +55,28 @@ if exist "%CLEAN_SCRIPT%" (
     )
 )
 
+rem If the local LOTL legacy pak already exists, never silently accept an empty editor-safe export.
+rem Retry the isolated exporter before rebuilding. One undecodable Blueprint can no longer abort all
+rem visual families because EXPORT_LOTL_EDITOR_ASSETS.ps1 now runs those families independently.
+set "HAS_REFERENCE_EXPORT=0"
+if exist "%REFERENCE_EXPORT%" (
+    dir /S /B "%REFERENCE_EXPORT%\*.glb" 2>NUL | findstr /R "." >NUL && set "HAS_REFERENCE_EXPORT=1"
+    dir /S /B "%REFERENCE_EXPORT%\*.gltf" 2>NUL | findstr /R "." >NUL && set "HAS_REFERENCE_EXPORT=1"
+    dir /S /B "%REFERENCE_EXPORT%\*.png" 2>NUL | findstr /R "." >NUL && set "HAS_REFERENCE_EXPORT=1"
+)
+
+if "%HAS_REFERENCE_EXPORT%"=="0" if exist "%LOTL_LEGACY_PAK%" if exist "%REFERENCE_EXPORT_SCRIPT%" (
+    echo.
+    echo LOTL legacy reference exists but editor-safe visuals are missing.
+    echo Retrying isolated LOTL visual/metadata export before build...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%REFERENCE_EXPORT_SCRIPT%" -LegacyPak "%LOTL_LEGACY_PAK%"
+    if errorlevel 1 (
+        echo WARNING: LOTL safe export still has undecodable packages.
+        echo Build will continue, but this will be stated explicitly in the runtime log.
+        echo Check ReferenceExtracted\Logs\cue4parse_priority_export.txt.
+    )
+)
+
 echo Removing stale compiled binaries and generated files...
 if exist "%PROJECT_DIR%Binaries" rmdir /S /Q "%PROJECT_DIR%Binaries"
 if exist "%PROJECT_DIR%Intermediate" rmdir /S /Q "%PROJECT_DIR%Intermediate"
@@ -90,6 +114,10 @@ if "%HAS_REFERENCE_EXPORT%"=="1" if exist "%REFERENCE_IMPORT_SCRIPT%" if exist "
     ) else (
         echo LOTL editor-safe import completed.
     )
+) else (
+    echo.
+    echo WARNING: NO EDITOR-SAFE LOTL VISUAL EXPORT IS AVAILABLE.
+    echo DEADBRICK will open for code testing, but reference meshes/materials are NOT connected.
 )
 
 echo.
