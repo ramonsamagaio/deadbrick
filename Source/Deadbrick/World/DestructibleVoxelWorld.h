@@ -15,6 +15,7 @@ class DEADBRICK_API ADestructibleVoxelWorld : public AActor
 
 public:
     ADestructibleVoxelWorld();
+    virtual void Tick(float DeltaSeconds) override;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Voxel")
     float VoxelSizeCm = 10.0f;
@@ -25,13 +26,26 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics")
     bool bEnableStructuralGravity = true;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="4096", ClampMax="500000"))
-    int32 MaxStructuralScanVoxels = 160000;
+    // Structural connectivity is processed incrementally. Large connected/anchored structures are
+    // deliberately never converted wholesale into physics in a single gameplay frame.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="512", ClampMax="65536"))
+    int32 MaxStructuralScanVoxels = 8192;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="64", ClampMax="8192"))
-    int32 MaxPhysicsIslandVoxels = 1024;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="64", ClampMax="4096"))
+    int32 MaxPhysicsIslandVoxels = 512;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="8.0", ClampMax="512.0"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="128", ClampMax="8192"))
+    int32 MaxDetachedComponentVoxels = 4096;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="64", ClampMax="16384"))
+    int32 StructuralWorkBudgetPerFrame = 2048;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="1", ClampMax="16"))
+    int32 ChunkRebuildBudgetPerFrame = 2;
+
+    // Kept only so old editor instances/default objects do not lose a serialized property. The
+    // support-capacity heuristic is no longer used; structural state is anchor connectivity based.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics")
     float SupportCapacityPerGroundVoxel = 384.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Items")
@@ -52,6 +66,8 @@ public:
     UFUNCTION(BlueprintCallable, Category="Voxel")
     int32 ApplySphereDamage(const FVector& WorldCenter, float RadiusCm, float Damage);
 
+    // Compatibility entry point for explosions/tools. This now queues a connectivity query instead
+    // of blocking the game thread with a full structural scan.
     UFUNCTION(BlueprintCallable, Category="Voxel|Physics")
     void EvaluateStructuralGravity(const FVector& WorldCenter, float RadiusCm = 650.0f);
 
@@ -67,15 +83,40 @@ public:
     void EndBulkEdit();
 
 private:
+    struct FStructuralQueryState
+    {
+        TArray<FIntVector> Seeds;
+        int32 SeedIndex = 0;
+        TSet<FIntVector> Visited;
+        TArray<FIntVector> Queue;
+        int32 QueueReadIndex = 0;
+        TArray<FIntVector> Component;
+        bool bComponentActive = false;
+        bool bGrounded = false;
+        bool bHitScanLimit = false;
+
+        void ResetComponent()
+        {
+            Queue.Reset();
+            QueueReadIndex = 0;
+            Component.Reset();
+            bComponentActive = false;
+            bGrounded = false;
+            bHitScanLimit = false;
+        }
+    };
+
     TMap<FIntVector, FDeadbrickVoxelChunk> Chunks;
     TMap<FIntVector, TObjectPtr<UProceduralMeshComponent>> ChunkMeshes;
     TMap<EDeadbrickVoxelMaterial, TObjectPtr<UMaterialInterface>> MaterialCache;
     TSet<EDeadbrickVoxelMaterial> MaterialResolutionAttempted;
     TMap<FIntVector, FDeadbrickVoxel> RuntimeEdits;
     bool bRecordRuntimeEdits = false;
+    bool bDeferRuntimeChunkRebuilds = false;
 
     TSet<FIntVector> DirtyChunks;
     int32 BulkEditDepth = 0;
+    TArray<FStructuralQueryState> StructuralQueries;
 
     static int32 FloorDiv(int32 Value, int32 Divisor);
     static int32 PositiveMod(int32 Value, int32 Divisor);
@@ -85,10 +126,13 @@ private:
     FDeadbrickVoxelChunk& FindOrCreateChunk(const FIntVector& ChunkCoord);
     UProceduralMeshComponent* FindOrCreateChunkMesh(const FIntVector& ChunkCoord);
     void MarkDirty(const FIntVector& ChunkCoord);
+    void FlushDirtyChunkBudget();
     void RebuildChunk(const FIntVector& ChunkCoord);
     uint8 DefaultIntegrityFor(EDeadbrickVoxelMaterial Material) const;
     UMaterialInterface* ResolveSurfaceMaterial(EDeadbrickVoxelMaterial Material);
     void ResolveStructuralGravityNear(const FVector& WorldCenter, float RadiusCm);
+    void QueueStructuralCheckFromDestroyed(const TArray<FIntVector>& DestroyedCells);
+    void ProcessStructuralQueries();
     void SpawnDetachedComponentAsPhysics(const TArray<FIntVector>& Component);
     void SpawnSalvageDrops(const FVector& WorldCenter, const TMap<EDeadbrickVoxelMaterial, int32>& DestroyedByMaterial);
 };
