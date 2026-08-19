@@ -5,8 +5,11 @@
 #include "Combat/FirearmComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "Items/DeadbrickPickupItem.h"
 #include "Reference/ReferenceAssetResolver.h"
 
 ADeadbrickCharacter::ADeadbrickCharacter()
@@ -27,12 +30,13 @@ ADeadbrickCharacter::ADeadbrickCharacter()
 
     UCharacterMovementComponent* Movement = GetCharacterMovement();
     Movement->bOrientRotationToMovement = false;
-    Movement->MaxWalkSpeed = 500.0f;
+    Movement->MaxWalkSpeed = WalkSpeed;
     Movement->MaxAcceleration = 2600.0f;
     Movement->BrakingDecelerationWalking = 2400.0f;
     Movement->GroundFriction = 8.0f;
     Movement->BrakingFrictionFactor = 2.0f;
     Movement->AirControl = 0.25f;
+    Movement->GravityScale = 1.0f;
 }
 
 void ADeadbrickCharacter::BeginPlay()
@@ -62,33 +66,27 @@ void ADeadbrickCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
     PlayerInputComponent->BindAction("Jump", IE_Released, this, &ACharacter::StopJumping);
     PlayerInputComponent->BindAction("Fire", IE_Pressed, this, &ADeadbrickCharacter::Fire);
     PlayerInputComponent->BindAction("Reload", IE_Pressed, this, &ADeadbrickCharacter::Reload);
+    PlayerInputComponent->BindAction("Interact", IE_Pressed, this, &ADeadbrickCharacter::Interact);
+    PlayerInputComponent->BindAction("Sprint", IE_Pressed, this, &ADeadbrickCharacter::SprintPressed);
+    PlayerInputComponent->BindAction("Sprint", IE_Released, this, &ADeadbrickCharacter::SprintReleased);
 }
 
 void ADeadbrickCharacter::MoveForward(float Value)
 {
     if (FMath::IsNearlyZero(Value) || !Controller) return;
     const FRotator YawRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
-    const FVector Direction = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
-    AddMovementInput(Direction, Value);
+    AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X), Value);
 }
 
 void ADeadbrickCharacter::MoveRight(float Value)
 {
     if (FMath::IsNearlyZero(Value) || !Controller) return;
     const FRotator YawRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
-    const FVector Direction = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
-    AddMovementInput(Direction, Value);
+    AddMovementInput(FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y), Value);
 }
 
-void ADeadbrickCharacter::LookYaw(float Value)
-{
-    AddControllerYawInput(Value);
-}
-
-void ADeadbrickCharacter::LookPitch(float Value)
-{
-    AddControllerPitchInput(Value);
-}
+void ADeadbrickCharacter::LookYaw(float Value) { AddControllerYawInput(Value); }
+void ADeadbrickCharacter::LookPitch(float Value) { AddControllerPitchInput(Value); }
 
 void ADeadbrickCharacter::Fire()
 {
@@ -103,6 +101,48 @@ void ADeadbrickCharacter::Reload()
     if (Firearm) Firearm->Reload();
 }
 
+void ADeadbrickCharacter::SprintPressed()
+{
+    if (GetCharacterMovement()) GetCharacterMovement()->MaxWalkSpeed = SprintSpeed;
+}
+
+void ADeadbrickCharacter::SprintReleased()
+{
+    if (GetCharacterMovement()) GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+}
+
+void ADeadbrickCharacter::Interact()
+{
+    if (!GetWorld() || !FirstPersonCamera) return;
+
+    const FVector Start = FirstPersonCamera->GetComponentLocation();
+    const FVector End = Start + FirstPersonCamera->GetForwardVector() * 320.0f;
+    FHitResult Hit;
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(DeadbrickInteract), false, this);
+    if (!GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params)) return;
+
+    ADeadbrickPickupItem* Pickup = Cast<ADeadbrickPickupItem>(Hit.GetActor());
+    if (!Pickup) return;
+
+    EDeadbrickItemType Type;
+    const int32 Quantity = Pickup->Collect(Type);
+    if (Quantity <= 0) return;
+
+    Inventory.FindOrAdd(Type) += Quantity;
+    if (GEngine)
+    {
+        const UEnum* Enum = StaticEnum<EDeadbrickItemType>();
+        const FString Name = Enum ? Enum->GetNameStringByValue((int64)Type) : TEXT("Item");
+        GEngine->AddOnScreenDebugMessage(-1, 2.5f, FColor::Cyan, FString::Printf(TEXT("Picked up %d x %s"), Quantity, *Name));
+    }
+}
+
+int32 ADeadbrickCharacter::GetInventoryQuantity(EDeadbrickItemType ItemType) const
+{
+    if (const int32* Found = Inventory.Find(ItemType)) return *Found;
+    return 0;
+}
+
 void ADeadbrickCharacter::TryApplyReferenceVisuals()
 {
     FString MeshPath;
@@ -112,7 +152,7 @@ void ADeadbrickCharacter::TryApplyReferenceVisuals()
 
     if (!ReferenceMesh || !GetMesh())
     {
-        UE_LOG(LogTemp, Display, TEXT("DEADBRICK player: no compatible cooked reference mesh found; using invisible FPS body."));
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK player: no compatible cooked reference mesh found; using FPS capsule until reference import succeeds."));
         return;
     }
 
