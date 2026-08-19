@@ -16,9 +16,15 @@ public:
     AVoxelPhysicsIsland();
 
     UFUNCTION()
-    void InitializeFromVoxels(ADestructibleVoxelWorld* SourceWorld, const TArray<FIntVector>& Voxels);
+    void InitializeFromVoxels(ADestructibleVoxelWorld* SourceWorld, const TArray<FIntVector>& Voxels, bool bStartSimulating = true);
+
+    UFUNCTION()
+    void ActivatePhysics();
 
 private:
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<UProceduralMeshComponent> MeshComponent;
+
+    float PreparedMassKg = 1.0f;
+    bool bPreparedForPhysics = false;
 };
