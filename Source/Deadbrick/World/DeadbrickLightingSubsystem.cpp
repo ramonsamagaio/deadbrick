@@ -34,12 +34,19 @@ void UDeadbrickLightingSubsystem::EnsureLighting(UWorld& World)
         Sun = World.SpawnActor<ADirectionalLight>(ADirectionalLight::StaticClass(), FVector::ZeroVector, FRotator(-48.0f, -35.0f, 0.0f), SpawnParams);
     }
 
-    if (Sun && Sun->GetLightComponent())
+    if (Sun)
     {
         Sun->SetActorRotation(FRotator(-48.0f, -35.0f, 0.0f));
-        Sun->GetLightComponent()->SetMobility(EComponentMobility::Movable);
-        Sun->GetLightComponent()->SetIntensity(8.0f);
-        Sun->GetLightComponent()->SetLightColor(FLinearColor(1.0f, 0.93f, 0.82f));
+        if (UDirectionalLightComponent* SunComponent = Sun->GetComponent())
+        {
+            SunComponent->SetMobility(EComponentMobility::Movable);
+            SunComponent->SetIntensity(8.0f);
+            SunComponent->SetLightColor(FLinearColor(1.0f, 0.93f, 0.82f));
+            SunComponent->SetAtmosphereSunLight(true);
+            SunComponent->SetAtmosphereSunLightIndex(0);
+            SunComponent->SetLightSourceAngle(0.5357f);
+            SunComponent->SetShadowAmount(1.0f);
+        }
     }
 
     ASkyLight* Sky = nullptr;
@@ -61,9 +68,9 @@ void UDeadbrickLightingSubsystem::EnsureLighting(UWorld& World)
         USkyLightComponent* SkyComponent = Sky->GetLightComponent();
         SkyComponent->SetMobility(EComponentMobility::Movable);
         SkyComponent->SetIntensity(1.25f);
-        SkyComponent->bRealTimeCapture = true;
+        SkyComponent->SetRealTimeCapture(true);
         SkyComponent->RecaptureSky();
     }
 
-    UE_LOG(LogTemp, Display, TEXT("DEADBRICK lighting ready: movable sun + realtime skylight fill."));
+    UE_LOG(LogTemp, Display, TEXT("DEADBRICK lighting ready: movable atmosphere sun + realtime skylight + Lumen project GI."));
 }
