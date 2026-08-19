@@ -2,6 +2,7 @@
 #include "World/DestructibleVoxelWorld.h"
 #include "AI/ZombieDirectorSubsystem.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/World.h"
 
 UFirearmComponent::UFirearmComponent()
 {
