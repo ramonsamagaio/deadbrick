@@ -7,7 +7,7 @@ public:
     virtual void StartupModule() override
     {
         FDefaultGameModuleImpl::StartupModule();
-        UE_LOG(LogTemp, Display, TEXT("DEADBRICK MODULE BUILD 2026-08-19-E INTEGRATED-DESTRUCTIVE-GAMEPLAY LOADED"));
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK MODULE BUILD 2026-08-19-F STRUCTURAL-GRAVITY-LOTL-DIRECT-LOAD LOADED"));
     }
 };
 
