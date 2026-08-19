@@ -48,7 +48,7 @@ public:
     TObjectPtr<UStaticMeshComponent> MeshComponent;
 
     UPROPERTY(BlueprintReadOnly, Category="Reference Prop")
-    EDeadbrickReferencePropRole Role = EDeadbrickReferencePropRole::Generic;
+    EDeadbrickReferencePropRole ReferencePropRole = EDeadbrickReferencePropRole::Generic;
 
 private:
     UPROPERTY(Transient)
