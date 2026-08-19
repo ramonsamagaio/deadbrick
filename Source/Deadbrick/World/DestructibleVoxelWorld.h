@@ -32,7 +32,7 @@ public:
     int32 MaxPhysicsIslandVoxels = 1024;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="8.0", ClampMax="512.0"))
-    float SupportCapacityPerGroundVoxel = 96.0f;
+    float SupportCapacityPerGroundVoxel = 384.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Items")
     bool bSpawnSalvageDrops = true;
