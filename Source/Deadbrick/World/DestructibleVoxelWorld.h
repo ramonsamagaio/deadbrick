@@ -30,6 +30,9 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="8", ClampMax="2048"))
     int32 MaxPhysicsIslandVoxels = 512;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Items")
+    bool bSpawnSalvageDrops = true;
+
     UFUNCTION(BlueprintCallable, Category="Voxel")
     FIntVector WorldToVoxel(const FVector& WorldPosition) const;
 
@@ -67,4 +70,5 @@ private:
     void RebuildChunk(const FIntVector& ChunkCoord);
     uint8 DefaultIntegrityFor(EDeadbrickVoxelMaterial Material) const;
     void ResolveStructuralGravityNear(const FVector& WorldCenter, float RadiusCm);
+    void SpawnSalvageDrops(const FVector& WorldCenter, const TMap<EDeadbrickVoxelMaterial, int32>& DestroyedByMaterial);
 };
