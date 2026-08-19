@@ -1,6 +1,7 @@
 #include "World/DestructibleVoxelWorld.h"
 
 #include "Engine/World.h"
+#include "ProceduralMeshComponent.h"
 #include "World/VoxelPhysicsIsland.h"
 
 namespace
@@ -21,8 +22,16 @@ void ADestructibleVoxelWorld::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
 
-    // Keep expensive topology and mesh work out of the input callback. The player can fire without
-    // a full connected-component traversal and multiple chunk cooks occurring in that same frame.
+    if (bDeferRuntimeChunkRebuilds && !bAsyncChunkCookingConfigured)
+    {
+        for (TPair<FIntVector, TObjectPtr<UProceduralMeshComponent>>& Pair : ChunkMeshes)
+        {
+            if (Pair.Value) Pair.Value->bUseAsyncCooking = true;
+        }
+        bAsyncChunkCookingConfigured = true;
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK voxel runtime: async chunk collision cooking enabled."));
+    }
+
     ProcessStructuralQueries();
     FlushDirtyChunkBudget();
 }
@@ -55,8 +64,6 @@ void ADestructibleVoxelWorld::EvaluateStructuralGravity(const FVector& WorldCent
 {
     if (!bEnableStructuralGravity) return;
 
-    // Compatibility path for explosions/tools. It only gathers nearby starting points; connectivity
-    // itself is processed later under the per-frame budget. Firearms no longer invoke a second scan.
     const FIntVector Center = WorldToVoxel(WorldCenter);
     const int32 RequestedRadius = FMath::CeilToInt(RadiusCm / FMath::Max(1.0f, VoxelSizeCm));
     const int32 RadiusV = FMath::Clamp(RequestedRadius, 1, 8);
@@ -143,8 +150,6 @@ void ADestructibleVoxelWorld::ProcessStructuralQueries()
             Query.Component.Add(Current);
             if (Query.Component.Num() >= MaxStructuralScanVoxels)
             {
-                // A very large component is deliberately treated as anchored/unsolved in this pass.
-                // Never turn an entire tower into tens of thousands of rigid bodies from one bullet.
                 Query.bHitScanLimit = true;
                 break;
             }
@@ -187,8 +192,6 @@ void ADestructibleVoxelWorld::ProcessStructuralQueries()
         {
             if (Query.Component.Num() > 0 && Query.Component.Num() <= MaxDetachedComponentVoxels)
             {
-                // Build the rigid fragment while source material cells still exist, then remove the
-                // anchored representation. This is the anchored -> unanchored transition.
                 const TArray<FIntVector> Detached = Query.Component;
                 SpawnDetachedComponentAsPhysics(Detached);
 
