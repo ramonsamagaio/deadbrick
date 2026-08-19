@@ -3,7 +3,9 @@ DerivedDataCache/
 Intermediate/
 Saved/
 ReferenceExtracted/
+ReferenceExported/
 Tools/retoc/
+Tools/cue4parse/
 .vs/
 .vscode/
 *.VC.db
