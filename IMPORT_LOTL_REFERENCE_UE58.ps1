@@ -27,27 +27,59 @@ if (-not (Test-Path $UnrealPak)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ReferenceRoot)) {
-    $ReferenceRoot = Read-Host "Paste or drag the local LayOfTheLand folder here, then press Enter"
+    $ReferenceRoot = Read-Host "Paste or drag the Steam game folder, LayOfTheLand, Content, or Paks folder here, then press Enter"
 }
-$ReferenceRoot = $ReferenceRoot.Trim().Trim('"')
+$ReferenceRoot = $ReferenceRoot.Trim().Trim('"').TrimEnd('\')
 
-# Accept either the LayOfTheLand folder itself or its parent folder.
-if (-not (Test-Path (Join-Path $ReferenceRoot "Content\Paks"))) {
-    $Nested = Join-Path $ReferenceRoot "LayOfTheLand"
-    if (Test-Path (Join-Path $Nested "Content\Paks")) {
-        $ReferenceRoot = $Nested
-    }
-}
-
-$PakDir = Join-Path $ReferenceRoot "Content\Paks"
-if (-not (Test-Path $PakDir)) {
-    Write-Host "Could not find Content\Paks under: $ReferenceRoot" -ForegroundColor Red
-    Write-Host "Point this script to the folder that contains LayOfTheLand\Content\Paks." -ForegroundColor Yellow
+if (-not (Test-Path $ReferenceRoot)) {
+    Write-Host "The supplied path does not exist: $ReferenceRoot" -ForegroundColor Red
     exit 12
 }
 
+$ResolvedInput = (Resolve-Path $ReferenceRoot).Path.TrimEnd('\')
+$PakDir = $null
+
+# Accept any of these inputs:
+#   ...\steamapps\common\Lay of the Land
+#   ...\steamapps\common\Lay of the Land\LayOfTheLand
+#   ...\LayOfTheLand\Content
+#   ...\LayOfTheLand\Content\Paks
+$Candidates = @()
+
+if ((Split-Path $ResolvedInput -Leaf) -ieq "Paks") {
+    $Candidates += $ResolvedInput
+}
+
+$Candidates += (Join-Path $ResolvedInput "Paks")
+$Candidates += (Join-Path $ResolvedInput "Content\Paks")
+$Candidates += (Join-Path $ResolvedInput "LayOfTheLand\Content\Paks")
+
+foreach ($Candidate in $Candidates) {
+    if (Test-Path $Candidate -PathType Container) {
+        $HasContainers = (Get-ChildItem $Candidate -File -ErrorAction SilentlyContinue | Where-Object {
+            $_.Extension -in @('.pak', '.utoc', '.ucas')
+        } | Select-Object -First 1) -ne $null
+
+        if ($HasContainers) {
+            $PakDir = (Resolve-Path $Candidate).Path.TrimEnd('\')
+            break
+        }
+    }
+}
+
+if (-not $PakDir) {
+    Write-Host "Could not locate a valid Content\Paks folder from: $ResolvedInput" -ForegroundColor Red
+    Write-Host "You may drag any of these: game folder, LayOfTheLand folder, Content folder, or Paks folder." -ForegroundColor Yellow
+    Write-Host "Expected to find .pak/.utoc/.ucas files inside the detected Paks directory." -ForegroundColor Yellow
+    exit 12
+}
+
+# Normalize ReferenceRoot to the actual LayOfTheLand folder.
+$ContentDir = Split-Path $PakDir -Parent
+$ReferenceRoot = Split-Path $ContentDir -Parent
+
 Write-Host "Reference build: $ReferenceRoot" -ForegroundColor Green
-Write-Host "Pak directory:   $PakDir" -ForegroundColor DarkGray
+Write-Host "Pak directory:   $PakDir" -ForegroundColor Green
 
 if (Test-Path $Stage) { Remove-Item $Stage -Recurse -Force }
 New-Item -ItemType Directory -Path $Stage -Force | Out-Null
@@ -141,6 +173,7 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $MarkerFile) -Force | Out
 @(
     "Imported: $(Get-Date -Format o)",
     "ReferenceRoot: $ReferenceRoot",
+    "PakDir: $PakDir",
     "CookedFilesCopied: $Copied",
     "ExtractStage: $Stage",
     "DescribeLog: $DescribeLog"
