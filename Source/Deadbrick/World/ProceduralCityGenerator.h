@@ -56,13 +56,14 @@ public:
     void GenerateCity();
 
 private:
-    UPROPERTY(Transient) TObjectPtr<UStaticMesh> ReferenceDoorMesh;
-    UPROPERTY(Transient) TObjectPtr<UStaticMesh> ReferenceWindowMesh;
-    UPROPERTY(Transient) TObjectPtr<UStaticMesh> ReferenceContainerMesh;
+    UPROPERTY(Transient) TArray<TObjectPtr<UStaticMesh>> ReferenceDoorMeshes;
+    UPROPERTY(Transient) TArray<TObjectPtr<UStaticMesh>> ReferenceWindowMeshes;
+    UPROPERTY(Transient) TArray<TObjectPtr<UStaticMesh>> ReferenceContainerMeshes;
 
     EDeadbrickDistrictType PickDistrict(FRandomStream& Stream, int32 BlockX, int32 BlockY) const;
     int32 PickFloors(EDeadbrickDistrictType District, FRandomStream& Stream) const;
     void LoadReferencePropMeshes();
+    UStaticMesh* PickReferenceMesh(const TArray<TObjectPtr<UStaticMesh>>& Pool, FRandomStream& Stream) const;
     void BuildRoadGrid(FRandomStream& Stream);
     void BuildBlock(int32 BlockX, int32 BlockY, EDeadbrickDistrictType District, FRandomStream& Stream);
     void BuildShell(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels, EDeadbrickVoxelMaterial WallMaterial, FRandomStream& Stream);
