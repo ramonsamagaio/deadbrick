@@ -64,6 +64,8 @@ private:
     void LoadReferencePropMeshes();
     void BuildRoadGrid(FRandomStream& Stream);
     void BuildBlock(int32 BlockX, int32 BlockY, EDeadbrickDistrictType District, FRandomStream& Stream);
-    void BuildShell(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels, EDeadbrickVoxelMaterial WallMaterial);
+    void BuildShell(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels, EDeadbrickVoxelMaterial WallMaterial, FRandomStream& Stream);
+    void BuildInterior(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels, FRandomStream& Stream);
+    void BuildVoxelStairwell(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels);
     void SpawnReferenceProp(UStaticMesh* Mesh, const FVector& WorldLocation, const FRotator& Rotation, const FVector& TargetDimensionsCm, EDeadbrickVoxelMaterial BreakMaterial, float Health);
 };
