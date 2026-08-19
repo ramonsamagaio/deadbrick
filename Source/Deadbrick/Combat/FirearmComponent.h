@@ -9,9 +9,9 @@ struct FDeadbrickFirearmStats
 {
     GENERATED_BODY()
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite) float Damage = 34.0f;
-    UPROPERTY(EditAnywhere, BlueprintReadWrite) float VoxelDamage = 55.0f;
-    UPROPERTY(EditAnywhere, BlueprintReadWrite) float VoxelDamageRadiusCm = 16.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) float Damage = 45.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) float VoxelDamage = 320.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) float VoxelDamageRadiusCm = 45.0f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float RangeCm = 12000.0f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float RoundsPerMinute = 600.0f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 MagazineSize = 30;
