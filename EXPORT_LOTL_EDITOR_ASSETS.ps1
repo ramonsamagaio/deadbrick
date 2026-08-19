@@ -14,6 +14,7 @@ $ToolRoot = Join-Path $ProjectRoot "Tools\cue4parse"
 $Cue4Parse = Join-Path $ToolRoot "cue4parse.exe"
 $LogRoot = Join-Path $ReferenceRoot "Logs"
 $ExportLog = Join-Path $LogRoot "cue4parse_priority_export.txt"
+$PackageListLog = Join-Path $LogRoot "cue4parse_priority_packages.txt"
 
 if ([string]::IsNullOrWhiteSpace($LegacyPak)) { $LegacyPak = $DefaultLegacyPak }
 $LegacyPak = [System.IO.Path]::GetFullPath($LegacyPak)
@@ -21,7 +22,7 @@ $LegacyPak = [System.IO.Path]::GetFullPath($LegacyPak)
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host " DEADBRICK - LOTL editor-safe asset/metadata export" -ForegroundColor Cyan
-Write-Host " cooked reference pak -> GLB/PNG/JSON (NO cooked uasset copy)" -ForegroundColor Cyan
+Write-Host " cooked reference pak -> visuals first, metadata separately" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -43,7 +44,6 @@ function Install-Cue4Parse {
     $Asset = $Release.assets | Where-Object {
         $_.name -match 'CUE4Parse\.CLI-.*-Win64-bin\.zip$'
     } | Select-Object -First 1
-
     if (-not $Asset) {
         $Asset = $Release.assets | Where-Object { $_.name -match 'Win64.*\.zip$|Windows.*\.zip$' } | Select-Object -First 1
     }
@@ -51,7 +51,6 @@ function Install-Cue4Parse {
 
     $Zip = Join-Path $ToolRoot $Asset.name
     Invoke-WebRequest -Headers $Headers -Uri $Asset.browser_download_url -OutFile $Zip
-
     Get-ChildItem $ToolRoot -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -ne $Zip } | Remove-Item -Force -ErrorAction SilentlyContinue
     Expand-Archive -Path $Zip -DestinationPath $ToolRoot -Force
     Remove-Item $Zip -Force -ErrorAction SilentlyContinue
@@ -66,86 +65,88 @@ Write-Host "CUE4Parse: $Cue4Parse" -ForegroundColor DarkGray
 
 $Mappings = Get-ChildItem $ReferenceRoot -Recurse -Filter "*.usmap" -File -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($Mappings) {
-    Write-Host "Mappings: $($Mappings.FullName)" -ForegroundColor DarkGray
+    Write-Host "Mappings: $($Mappings.FullName)" -ForegroundColor Green
 } else {
-    Write-Host "No .usmap mapping found. Exporter will use package metadata that can be decoded without mappings." -ForegroundColor DarkYellow
+    Write-Host "No .usmap mapping found. Visual exports will still be attempted independently." -ForegroundColor DarkYellow
+    Write-Host "Blueprint defaults that require unversioned property mappings may remain unavailable until a mapping is present." -ForegroundColor DarkYellow
 }
 
-# CUE4Parse's auto mode exports meshes/textures/animations in converter formats and falls back to
-# JSON for non-visual packages. That means the same targeted pass gives DEADBRICK both usable visual
-# references and inspectable Blueprint/default-object metadata for behavior parity.
-$Patterns = @(
-    '*FirstPerson*',
-    '*First_Person*',
-    '*Player*',
-    '*Character*',
-    '*Movement*',
-    '*Locomotion*',
-    '*Human*',
-    '*Hand*',
-    '*Arm*',
-    '*Weapon*',
-    '*Gun*',
-    '*Rifle*',
-    '*Pistol*',
-    '*Shotgun*',
-    '*Door*',
-    '*Window*',
-    '*Glass*',
-    '*Container*',
-    '*Crate*',
-    '*Chest*',
-    '*Locker*',
-    '*Cabinet*',
-    '*Barrel*',
-    '*Road*',
-    '*Asphalt*',
-    '*Brick*',
-    '*Concrete*',
-    '*Wood*',
-    '*Metal*',
-    '*Soil*',
-    '*Dirt*',
-    '*MainGameMode*',
-    '*GameInstance*',
-    '*AIManager*',
-    '*VoxelManager*',
-    '*MainVoxel*',
-    '*PhysicsVoxel*',
-    '*PropVoxel*',
-    '*SimulationVoxel*',
-    '*ItemManager*',
-    '*SaveManager*',
-    '*AmbienceManager*',
-    '*StructureManager*',
-    '*RoadGenerator*'
+$VisualPatterns = @(
+    '*SK_*', '*SM_*', '*SkeletalMesh*', '*StaticMesh*',
+    '*FirstPerson*', '*First_Person*', '*Hand*', '*Arm*',
+    '*Weapon*', '*Gun*', '*Rifle*', '*Pistol*', '*Shotgun*',
+    '*Door*', '*Window*', '*Glass*', '*Container*', '*Crate*',
+    '*Chest*', '*Locker*', '*Cabinet*', '*Barrel*',
+    '*Road*', '*Asphalt*', '*Brick*', '*Concrete*', '*Wood*', '*Metal*'
+)
+
+$MetadataPatterns = @(
+    '*MainPlayerController*', '*Player*', '*Character*', '*Movement*', '*Locomotion*',
+    '*MainGameMode*', '*GameInstance*', '*AIManager*', '*VoxelManager*',
+    '*MainVoxel*', '*PhysicsVoxel*', '*PropVoxel*', '*SimulationVoxel*',
+    '*ItemManager*', '*SaveManager*', '*AmbienceManager*', '*StructureManager*',
+    '*RoadGenerator*', '*VoxelItemComponent*', '*VoxelPhysics*'
 )
 
 if (Test-Path $ExportRoot) {
     Get-ChildItem $ExportRoot -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 }
 New-Item -ItemType Directory -Path $ExportRoot -Force | Out-Null
-Remove-Item $ExportLog -Force -ErrorAction SilentlyContinue
+Remove-Item $ExportLog,$PackageListLog -Force -ErrorAction SilentlyContinue
 
-$Args = New-Object System.Collections.Generic.List[string]
-$Args.Add('--pak'); $Args.Add($LegacyPak)
-$Args.Add('-o'); $Args.Add($ExportRoot)
-$Args.Add('-g'); $Args.Add('GAME_UE5_LATEST')
-$Args.Add('--mesh-format'); $Args.Add('Gltf2')
-$Args.Add('--texture-format'); $Args.Add('Png')
-$Args.Add('--lod-format'); $Args.Add('FirstLod')
-$Args.Add('-y')
-if ($Mappings) {
-    $Args.Add('-m'); $Args.Add($Mappings.FullName)
+$Common = New-Object System.Collections.Generic.List[string]
+$Common.Add('--pak'); $Common.Add($LegacyPak)
+$Common.Add('-g'); $Common.Add('GAME_UE5_LATEST')
+if ($Mappings) { $Common.Add('-m'); $Common.Add($Mappings.FullName) }
+
+Write-Host ""
+Write-Host "[A] Listing candidate package families..." -ForegroundColor Cyan
+foreach ($Pattern in ($VisualPatterns + $MetadataPatterns | Select-Object -Unique)) {
+    $ListArgs = New-Object System.Collections.Generic.List[string]
+    foreach ($Arg in $Common) { $ListArgs.Add($Arg) }
+    $ListArgs.Add('-p'); $ListArgs.Add($Pattern)
+    $ListArgs.Add('-l')
+    "=== $Pattern ===" | Add-Content $PackageListLog
+    & $Cue4Parse @ListArgs 2>&1 | Add-Content $PackageListLog
 }
-foreach ($Pattern in $Patterns) {
+
+Write-Host "Package inventory: $PackageListLog" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "[B] Exporting visual families independently..." -ForegroundColor Cyan
+
+$VisualFailures = 0
+foreach ($Pattern in $VisualPatterns) {
+    Write-Host "  visual $Pattern" -ForegroundColor DarkCyan
+    $Args = New-Object System.Collections.Generic.List[string]
+    foreach ($Arg in $Common) { $Args.Add($Arg) }
+    $Args.Add('-o'); $Args.Add($ExportRoot)
+    $Args.Add('--mesh-format'); $Args.Add('Gltf2')
+    $Args.Add('--texture-format'); $Args.Add('Png')
+    $Args.Add('--lod-format'); $Args.Add('FirstLod')
+    $Args.Add('-y')
     $Args.Add('-p'); $Args.Add($Pattern)
+
+    "=== VISUAL $Pattern ===" | Add-Content $ExportLog
+    & $Cue4Parse @Args 2>&1 | Add-Content $ExportLog
+    if ($LASTEXITCODE -ne 0) { $VisualFailures++ }
 }
 
 Write-Host ""
-Write-Host "Exporting priority LOTL visuals and gameplay metadata..." -ForegroundColor Cyan
-& $Cue4Parse @Args 2>&1 | Tee-Object -FilePath $ExportLog | Out-Host
-$ExitCode = $LASTEXITCODE
+Write-Host "[C] Exporting gameplay/default-object metadata independently..." -ForegroundColor Cyan
+$MetadataFailures = 0
+foreach ($Pattern in $MetadataPatterns) {
+    Write-Host "  metadata $Pattern" -ForegroundColor DarkCyan
+    $Args = New-Object System.Collections.Generic.List[string]
+    foreach ($Arg in $Common) { $Args.Add($Arg) }
+    $Args.Add('-o'); $Args.Add($ExportRoot)
+    $Args.Add('-f'); $Args.Add('json')
+    $Args.Add('-y')
+    $Args.Add('-p'); $Args.Add($Pattern)
+
+    "=== METADATA $Pattern ===" | Add-Content $ExportLog
+    & $Cue4Parse @Args 2>&1 | Add-Content $ExportLog
+    if ($LASTEXITCODE -ne 0) { $MetadataFailures++ }
+}
 
 $Glb = @(Get-ChildItem $ExportRoot -Recurse -Include '*.glb','*.gltf' -File -ErrorAction SilentlyContinue)
 $Textures = @(Get-ChildItem $ExportRoot -Recurse -Include '*.png','*.tga','*.jpg','*.jpeg' -File -ErrorAction SilentlyContinue)
@@ -158,37 +159,41 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $Marker) -Force | Out-Nul
     "Exported: $(Get-Date -Format o)",
     "LegacyPak: $LegacyPak",
     "Cue4Parse: $Cue4Parse",
-    "ExitCode: $ExitCode",
+    "Mappings: $(if ($Mappings) { $Mappings.FullName } else { '<none>' })",
+    "VisualPatternFailures: $VisualFailures",
+    "MetadataPatternFailures: $MetadataFailures",
     "GLTFMeshes: $($Glb.Count)",
     "Textures: $($Textures.Count)",
     "ActorXFiles: $($ActorX.Count)",
     "GameplayMetadataJson: $($Json.Count)",
     "ExportRoot: $ExportRoot",
-    "Log: $ExportLog"
+    "Log: $ExportLog",
+    "PackageList: $PackageListLog"
 ) | Set-Content $Marker
 
 Write-Host ""
-Write-Host "Reference export result:" -ForegroundColor Cyan
-Write-Host "  GLB/GLTF meshes   : $($Glb.Count)" -ForegroundColor Green
-Write-Host "  textures          : $($Textures.Count)" -ForegroundColor Green
-Write-Host "  gameplay JSON     : $($Json.Count)" -ForegroundColor Green
-if ($ActorX.Count -gt 0) { Write-Host "  ActorX anim/mesh  : $($ActorX.Count)" -ForegroundColor DarkGray }
+Write-Host "LOTL export result:" -ForegroundColor Cyan
+Write-Host "  GLB/GLTF meshes       : $($Glb.Count)" -ForegroundColor Green
+Write-Host "  textures              : $($Textures.Count)" -ForegroundColor Green
+Write-Host "  gameplay JSON         : $($Json.Count)" -ForegroundColor Green
+Write-Host "  visual pattern errors : $VisualFailures" -ForegroundColor DarkYellow
+Write-Host "  metadata errors       : $MetadataFailures" -ForegroundColor DarkYellow
 
-if ($ExitCode -ne 0 -and $Glb.Count -eq 0 -and $Textures.Count -eq 0 -and $Json.Count -eq 0) {
-    Write-Host "CUE4Parse could not decode the priority packages. Send ReferenceExtracted\Logs\cue4parse_priority_export.txt." -ForegroundColor Red
+if ($Glb.Count -eq 0 -and $Textures.Count -eq 0 -and $Json.Count -eq 0) {
+    Write-Host "No editor-safe LOTL data was decoded. Check the package inventory and export log." -ForegroundColor Red
+    Write-Host $PackageListLog -ForegroundColor Yellow
+    Write-Host $ExportLog -ForegroundColor Yellow
     exit 30
 }
 
 if ($Glb.Count -eq 0 -and $Textures.Count -eq 0) {
-    if ($Json.Count -gt 0) {
-        Write-Host "Gameplay metadata was decoded, but no priority visual assets were produced yet." -ForegroundColor Yellow
-        Write-Host "DEADBRICK will keep its visible fallback viewmodel until a compatible GLB/texture export is available." -ForegroundColor Yellow
-        exit 0
-    }
-    Write-Host "No priority editor-safe assets were produced yet. The package list/mappings need another pass." -ForegroundColor Yellow
-    exit 31
+    Write-Host "Gameplay metadata was recovered, but no visual references were decoded." -ForegroundColor Yellow
+} else {
+    Write-Host "Visual references are ready for Unreal's normal importer." -ForegroundColor Green
 }
 
-Write-Host ""
-Write-Host "ReferenceExported is ready for Unreal's normal importer and behavior analysis." -ForegroundColor Green
+if ($Json.Count -eq 0) {
+    Write-Host "No Blueprint/default metadata decoded. If the packages are unversioned, a .usmap mapping is required for exact property recovery." -ForegroundColor Yellow
+}
+
 exit 0
