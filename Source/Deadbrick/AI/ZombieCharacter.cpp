@@ -1,13 +1,31 @@
 #include "AI/ZombieCharacter.h"
 #include "AI/ZombieDirectorSubsystem.h"
-#include "Kismet/GameplayStatics.h"
-#include "GameFramework/CharacterMovementComponent.h"
+#include "AIController.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "UObject/ConstructorHelpers.h"
 
 AZombieCharacter::AZombieCharacter()
 {
     PrimaryActorTick.bCanEverTick = true;
     GetCharacterMovement()->MaxWalkSpeed = 230.0f;
+
+    AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
+    AIControllerClass = AAIController::StaticClass();
+
+    PlaceholderBody = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderBody"));
+    PlaceholderBody->SetupAttachment(GetRootComponent());
+    PlaceholderBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    PlaceholderBody->SetRelativeScale3D(FVector(0.55f, 0.55f, 1.65f));
+
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
+    if (CubeMesh.Succeeded())
+    {
+        PlaceholderBody->SetStaticMesh(CubeMesh.Object);
+    }
 }
 
 void AZombieCharacter::BeginPlay()
