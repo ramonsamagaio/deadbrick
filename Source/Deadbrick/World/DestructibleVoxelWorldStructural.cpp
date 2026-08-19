@@ -19,7 +19,6 @@ void ADestructibleVoxelWorld::EvaluateStructuralGravity(const FVector& WorldCent
 
     TSet<FIntVector> Visited;
     int32 CollapsedVoxels = 0;
-    int32 SpawnedBodies = 0;
 
     for (int32 Z = -RadiusV; Z <= RadiusV; ++Z)
     for (int32 Y = -RadiusV; Y <= RadiusV; ++Y)
@@ -96,14 +95,10 @@ void ADestructibleVoxelWorld::EvaluateStructuralGravity(const FVector& WorldCent
 
         if (Component.Num() == 0) continue;
 
-        // If the component is disconnected from any ground/foundation layer, every voxel in it is unsupported.
         int32 FailureZ = bTouchesGround ? MAX_int32 : MinZ;
 
         if (bTouchesGround)
         {
-            // Test vertical load through every horizontal cross-section. This catches the classic case
-            // where a huge building remains technically connected to the foundation by one absurdly
-            // small pillar. The weakest insufficient layer becomes the fracture plane.
             int32 VoxelsAbove = Component.Num();
             for (int32 LayerZ = MinZ; LayerZ <= MaxZ; ++LayerZ)
             {
@@ -111,7 +106,10 @@ void ADestructibleVoxelWorld::EvaluateStructuralGravity(const FVector& WorldCent
                 VoxelsAbove -= LayerCount;
                 if (VoxelsAbove <= 0) break;
 
-                const int32 RequiredSupport = FMath::Max(1, FMath::CeilToInt((float)VoxelsAbove / FMath::Max(1.0f, SupportCapacityPerGroundVoxel)));
+                const int32 RequiredSupport = FMath::Max(
+                    1,
+                    FMath::CeilToInt((float)VoxelsAbove / FMath::Max(1.0f, SupportCapacityPerGroundVoxel)));
+
                 if (LayerCount < RequiredSupport)
                 {
                     FailureZ = LayerZ;
@@ -124,7 +122,9 @@ void ADestructibleVoxelWorld::EvaluateStructuralGravity(const FVector& WorldCent
         {
             if (bHitScanLimit)
             {
-                UE_LOG(LogTemp, Warning, TEXT("DEADBRICK structural scan reached %d voxels on a supported component; raise MaxStructuralScanVoxels if this building grows further."), MaxStructuralScanVoxels);
+                UE_LOG(LogTemp, Warning,
+                    TEXT("DEADBRICK structural scan reached %d voxels on a supported component."),
+                    MaxStructuralScanVoxels);
             }
             continue;
         }
@@ -145,11 +145,7 @@ void ADestructibleVoxelWorld::EvaluateStructuralGravity(const FVector& WorldCent
         EndBulkEdit();
 
         CollapsedVoxels += Detached.Num();
-
-        const int32 Before = GetWorld()->GetActorCount();
         SpawnDetachedComponentAsPhysics(Detached);
-        const int32 After = GetWorld()->GetActorCount();
-        SpawnedBodies += FMath::Max(0, After - Before);
 
         UE_LOG(LogTemp, Display,
             TEXT("DEADBRICK STRUCTURAL FAILURE: %d voxels detached at Z=%d (component=%d, ground=%s, scanLimit=%s)"),
@@ -159,7 +155,7 @@ void ADestructibleVoxelWorld::EvaluateStructuralGravity(const FVector& WorldCent
     if (CollapsedVoxels > 0 && GEngine)
     {
         GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Orange,
-            FString::Printf(TEXT("STRUCTURAL COLLAPSE: %d voxels | %d physics fragments"), CollapsedVoxels, SpawnedBodies));
+            FString::Printf(TEXT("STRUCTURAL COLLAPSE: %d voxels detached into physics fragments"), CollapsedVoxels));
     }
 }
 
@@ -167,8 +163,6 @@ void ADestructibleVoxelWorld::SpawnDetachedComponentAsPhysics(const TArray<FIntV
 {
     if (!GetWorld() || Component.Num() == 0) return;
 
-    // Spatial buckets keep each Chaos convex hull local. A sequential array split could put pieces
-    // from opposite sides of a building in the same enormous collision box.
     const int32 IslandSpan = FMath::Clamp(
         FMath::FloorToInt(FMath::Pow((float)FMath::Max(64, MaxPhysicsIslandVoxels), 1.0f / 3.0f)),
         4,
@@ -192,7 +186,6 @@ void ADestructibleVoxelWorld::SpawnDetachedComponentAsPhysics(const TArray<FIntV
         TArray<FIntVector>& Cells = Pair.Value;
         if (Cells.Num() == 0) continue;
 
-        // Safety split in the unlikely event a bucket exceeds the configured body budget.
         for (int32 Offset = 0; Offset < Cells.Num(); Offset += MaxPhysicsIslandVoxels)
         {
             const int32 Count = FMath::Min(MaxPhysicsIslandVoxels, Cells.Num() - Offset);
