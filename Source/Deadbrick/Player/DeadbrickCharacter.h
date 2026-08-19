@@ -41,6 +41,9 @@ public:
     UFUNCTION(BlueprintCallable, Category="Inventory")
     bool ConsumeInventoryItem(EDeadbrickItemType ItemType, int32 Quantity);
 
+    UFUNCTION(BlueprintCallable, Category="Player")
+    void SetSafeSpawnTransform(const FVector& Location, const FRotator& Rotation);
+
 protected:
     virtual void BeginPlay() override;
 
