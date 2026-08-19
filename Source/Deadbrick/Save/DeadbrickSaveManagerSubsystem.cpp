@@ -3,6 +3,7 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Player/DeadbrickCharacter.h"
 #include "Save/DeadbrickSaveGame.h"
@@ -63,8 +64,7 @@ bool UDeadbrickSaveManagerSubsystem::LoadCurrentWorld(const FString& SlotName)
     UWorld* World = GetWorld();
     if (!World) return false;
 
-    const FString Resolved = ResolveSlot(SlotName);
-    UDeadbrickSaveGame* Save = Cast<UDeadbrickSaveGame>(UGameplayStatics::LoadGameFromSlot(Resolved, 0));
+    UDeadbrickSaveGame* Save = Cast<UDeadbrickSaveGame>(UGameplayStatics::LoadGameFromSlot(ResolveSlot(SlotName), 0));
     if (!Save) return false;
 
     for (TActorIterator<ADestructibleVoxelWorld> It(World); It; ++It)
