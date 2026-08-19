@@ -85,8 +85,6 @@ void AProceduralCityGenerator::BuildRoadGrid(FRandomStream& Stream)
     const int32 StreetV = FMath::RoundToInt(StreetWidthMeters * CmPerMeter / VoxelWorld->VoxelSizeCm);
     const int32 Span = BlocksPerAxis * BlockV + (BlocksPerAxis + 1) * StreetV;
 
-    // The prototype uses a real voxel soil volume instead of a thin floating plane. It remains destructible,
-    // but the player no longer immediately falls into the void after leaving a one-voxel road surface.
     const int32 SoilDepth = FMath::Max(8, FMath::RoundToInt(2.4f * 100.0f / VoxelWorld->VoxelSizeCm));
     VoxelWorld->FillBox(FIntVector(0, 0, -SoilDepth), FIntVector(Span, Span, -1), EDeadbrickVoxelMaterial::Soil);
 
@@ -128,7 +126,9 @@ void AProceduralCityGenerator::BuildBlock(int32 BlockX, int32 BlockY, EDeadbrick
                 ? EDeadbrickVoxelMaterial::Concrete
                 : EDeadbrickVoxelMaterial::Brick;
 
-        BuildShell(FIntVector(X0, Y0, 1), FIntVector(X1, Y1, Z1), FloorV, WallMaterial, Stream);
+        // Z=0 is the first structural/foundation layer. It touches the soil at Z=-1 directly,
+        // so structural support and CharacterMovement see one continuous physical world.
+        BuildShell(FIntVector(X0, Y0, 0), FIntVector(X1, Y1, Z1), FloorV, WallMaterial, Stream);
 
         if (ReferenceContainerMesh && Stream.FRand() < 0.65f)
         {
@@ -160,7 +160,6 @@ void AProceduralCityGenerator::BuildShell(
 {
     const int32 Wall = 2;
 
-    // Foundation and all slabs are voxels, not decorative meshes.
     VoxelWorld->FillBox(FIntVector(Min.X, Min.Y, Min.Z), FIntVector(Max.X, Max.Y, Min.Z + Wall - 1), EDeadbrickVoxelMaterial::Concrete);
 
     for (int32 Z = Min.Z; Z <= Max.Z; ++Z)
@@ -293,13 +292,11 @@ void AProceduralCityGenerator::BuildVoxelStairwell(const FIntVector& Min, const 
     {
         const int32 SlabZ = FloorBase + FloorHeightVoxels;
 
-        // Open the next slab where the stair arrives.
         for (int32 X = StairX0; X < StairX0 + StairWidth; ++X)
         for (int32 Y = StairY0; Y <= StairY0 + StairRun; ++Y)
         for (int32 Z = SlabZ; Z <= SlabZ + 1; ++Z)
             VoxelWorld->SetVoxel(FIntVector(X, Y, Z), EDeadbrickVoxelMaterial::Air, 0);
 
-        // Each step is a small voxel block. Nothing here is a non-destructible stair mesh.
         for (int32 Step = 0; Step < StairRun; ++Step)
         {
             const float Alpha = StairRun > 1 ? (float)Step / (float)(StairRun - 1) : 0.0f;
