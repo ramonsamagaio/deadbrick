@@ -6,6 +6,7 @@
 #include "ProceduralCityGenerator.generated.h"
 
 class ADestructibleVoxelWorld;
+class UStaticMesh;
 
 UENUM(BlueprintType)
 enum class EDeadbrickDistrictType : uint8
@@ -54,9 +55,15 @@ public:
     void GenerateCity();
 
 private:
+    UPROPERTY(Transient) TObjectPtr<UStaticMesh> ReferenceDoorMesh;
+    UPROPERTY(Transient) TObjectPtr<UStaticMesh> ReferenceWindowMesh;
+    UPROPERTY(Transient) TObjectPtr<UStaticMesh> ReferenceContainerMesh;
+
     EDeadbrickDistrictType PickDistrict(FRandomStream& Stream, int32 BlockX, int32 BlockY) const;
     int32 PickFloors(EDeadbrickDistrictType District, FRandomStream& Stream) const;
+    void LoadReferencePropMeshes();
     void BuildRoadGrid(FRandomStream& Stream);
     void BuildBlock(int32 BlockX, int32 BlockY, EDeadbrickDistrictType District, FRandomStream& Stream);
     void BuildShell(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels, EDeadbrickVoxelMaterial WallMaterial);
+    void SpawnReferenceProp(UStaticMesh* Mesh, const FVector& WorldLocation, const FRotator& Rotation, const FVector& TargetDimensionsCm, EDeadbrickVoxelMaterial BreakMaterial, float Health);
 };
