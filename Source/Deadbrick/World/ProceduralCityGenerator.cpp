@@ -1,6 +1,10 @@
 #include "World/ProceduralCityGenerator.h"
-#include "World/DestructibleVoxelWorld.h"
+
+#include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
+#include "Reference/ReferenceAssetResolver.h"
+#include "World/DestructibleVoxelWorld.h"
+#include "World/ReferenceDestructibleProp.h"
 
 AProceduralCityGenerator::AProceduralCityGenerator()
 {
@@ -39,6 +43,13 @@ int32 AProceduralCityGenerator::PickFloors(EDeadbrickDistrictType District, FRan
     }
 }
 
+void AProceduralCityGenerator::LoadReferencePropMeshes()
+{
+    ReferenceDoorMesh = DeadbrickReferenceAssets::FindStaticMesh({TEXT("door"), TEXT("gate")});
+    ReferenceWindowMesh = DeadbrickReferenceAssets::FindStaticMesh({TEXT("window"), TEXT("glass")});
+    ReferenceContainerMesh = DeadbrickReferenceAssets::FindStaticMesh({TEXT("container"), TEXT("crate"), TEXT("chest"), TEXT("box")});
+}
+
 void AProceduralCityGenerator::GenerateCity()
 {
     if (!VoxelWorld)
@@ -50,6 +61,8 @@ void AProceduralCityGenerator::GenerateCity()
         }
     }
     if (!VoxelWorld) return;
+
+    LoadReferencePropMeshes();
 
     FRandomStream Stream(Seed);
     Buildings.Reset();
@@ -72,6 +85,7 @@ void AProceduralCityGenerator::BuildRoadGrid(FRandomStream& Stream)
     const int32 StreetV = FMath::RoundToInt(StreetWidthMeters * CmPerMeter / VoxelWorld->VoxelSizeCm);
     const int32 Span = BlocksPerAxis * BlockV + (BlocksPerAxis + 1) * StreetV;
 
+    // Ground and roads are also voxel cells, so bullets/explosions can damage them exactly like walls.
     VoxelWorld->FillBox(FIntVector(0, 0, -3), FIntVector(Span, Span, -1), EDeadbrickVoxelMaterial::Soil);
 
     for (int32 I = 0; I <= BlocksPerAxis; ++I)
@@ -112,6 +126,18 @@ void AProceduralCityGenerator::BuildBlock(int32 BlockX, int32 BlockY, EDeadbrick
 
         BuildShell(FIntVector(X0, Y0, 1), FIntVector(X1, Y1, Z1), FloorV, WallMaterial);
 
+        if (ReferenceContainerMesh && Stream.FRand() < 0.65f)
+        {
+            const FVector ContainerLocation = VoxelWorld->VoxelToWorld(FIntVector(X0 + 3, FMath::Max(1, Y0 - 5), 3));
+            SpawnReferenceProp(
+                ReferenceContainerMesh,
+                ContainerLocation,
+                FRotator(0.0f, Stream.FRandRange(-20.0f, 20.0f), 0.0f),
+                FVector(180.0f, 100.0f, 110.0f),
+                EDeadbrickVoxelMaterial::Wood,
+                75.0f);
+        }
+
         FDeadbrickBuildingSpec Spec;
         Spec.Block = FIntPoint(BlockX, BlockY);
         Spec.Lot = FIntPoint(LX, LY);
@@ -144,10 +170,81 @@ void AProceduralCityGenerator::BuildShell(const FIntVector& Min, const FIntVecto
 
     const int32 DoorWidth = FMath::Max(4, (Max.X - Min.X) / 8);
     const int32 DoorCenter = (Min.X + Max.X) / 2;
-    for (int32 Z = Min.Z + 2; Z < Min.Z + FMath::Min(FloorHeightVoxels - 2, 24); ++Z)
+    const int32 DoorTop = Min.Z + FMath::Min(FloorHeightVoxels - 2, 12);
+
+    for (int32 Z = Min.Z + 2; Z <= DoorTop; ++Z)
     for (int32 X = DoorCenter - DoorWidth / 2; X <= DoorCenter + DoorWidth / 2; ++X)
     {
         VoxelWorld->SetVoxel(FIntVector(X, Min.Y, Z), EDeadbrickVoxelMaterial::Air, 0);
         VoxelWorld->SetVoxel(FIntVector(X, Min.Y + 1, Z), EDeadbrickVoxelMaterial::Air, 0);
+    }
+
+    if (ReferenceDoorMesh)
+    {
+        const int32 DoorMidZ = (Min.Z + 2 + DoorTop) / 2;
+        SpawnReferenceProp(
+            ReferenceDoorMesh,
+            VoxelWorld->VoxelToWorld(FIntVector(DoorCenter, Min.Y, DoorMidZ)),
+            FRotator::ZeroRotator,
+            FVector((DoorWidth + 1) * VoxelWorld->VoxelSizeCm, 16.0f, (DoorTop - Min.Z) * VoxelWorld->VoxelSizeCm),
+            EDeadbrickVoxelMaterial::Wood,
+            90.0f);
+    }
+
+    // Cut real voxel window openings on the facade. When a reference window mesh is available,
+    // it occupies the opening as a destructible visual and converts to voxel debris when broken.
+    const int32 Width = Max.X - Min.X + 1;
+    const int32 WindowHalfWidth = FMath::Clamp(Width / 14, 2, 5);
+    const int32 WindowCenters[2] = { Min.X + Width / 3, Min.X + (Width * 2) / 3 };
+
+    for (int32 FloorBase = Min.Z; FloorBase + FloorHeightVoxels <= Max.Z + 1; FloorBase += FloorHeightVoxels)
+    {
+        const int32 WindowBottom = FloorBase + FMath::Max(3, FloorHeightVoxels / 3);
+        const int32 WindowTop = FMath::Min(FloorBase + FloorHeightVoxels - 3, WindowBottom + FMath::Max(3, FloorHeightVoxels / 3));
+        if (WindowTop <= WindowBottom) continue;
+
+        for (const int32 WindowCenter : WindowCenters)
+        {
+            if (FloorBase == Min.Z && FMath::Abs(WindowCenter - DoorCenter) <= DoorWidth) continue;
+
+            for (int32 Z = WindowBottom; Z <= WindowTop; ++Z)
+            for (int32 X = WindowCenter - WindowHalfWidth; X <= WindowCenter + WindowHalfWidth; ++X)
+            {
+                VoxelWorld->SetVoxel(FIntVector(X, Min.Y, Z), EDeadbrickVoxelMaterial::Air, 0);
+                VoxelWorld->SetVoxel(FIntVector(X, Min.Y + 1, Z), EDeadbrickVoxelMaterial::Air, 0);
+            }
+
+            if (ReferenceWindowMesh)
+            {
+                const int32 WindowMidZ = (WindowBottom + WindowTop) / 2;
+                SpawnReferenceProp(
+                    ReferenceWindowMesh,
+                    VoxelWorld->VoxelToWorld(FIntVector(WindowCenter, Min.Y, WindowMidZ)),
+                    FRotator::ZeroRotator,
+                    FVector((WindowHalfWidth * 2 + 1) * VoxelWorld->VoxelSizeCm, 10.0f, (WindowTop - WindowBottom + 1) * VoxelWorld->VoxelSizeCm),
+                    EDeadbrickVoxelMaterial::Glass,
+                    35.0f);
+            }
+        }
+    }
+}
+
+void AProceduralCityGenerator::SpawnReferenceProp(
+    UStaticMesh* Mesh,
+    const FVector& WorldLocation,
+    const FRotator& Rotation,
+    const FVector& TargetDimensionsCm,
+    EDeadbrickVoxelMaterial BreakMaterial,
+    float Health)
+{
+    if (!Mesh || !GetWorld() || !VoxelWorld) return;
+
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    AReferenceDestructibleProp* Prop = GetWorld()->SpawnActor<AReferenceDestructibleProp>(
+        AReferenceDestructibleProp::StaticClass(), WorldLocation, Rotation, SpawnParams);
+    if (Prop)
+    {
+        Prop->InitializeFromReference(Mesh, VoxelWorld, BreakMaterial, TargetDimensionsCm, Health);
     }
 }
