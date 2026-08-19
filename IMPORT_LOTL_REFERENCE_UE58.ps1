@@ -18,8 +18,8 @@ $RetocExe = Join-Path $ToolsDir "retoc.exe"
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " DEADBRICK - LayOfTheLand reference extractor (UE 5.8)" -ForegroundColor Cyan
-Write-Host " IoStore -> retoc legacy reference packages (isolated)" -ForegroundColor Cyan
+Write-Host " DEADBRICK - LayOfTheLand reference pipeline (UE 5.8)" -ForegroundColor Cyan
+Write-Host " IoStore -> isolated cooked reference -> GLB/PNG -> Unreal" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -129,7 +129,7 @@ if (Test-Path $Stage) { Remove-Item $Stage -Recurse -Force }
 New-Item -ItemType Directory -Path $Stage -Force | Out-Null
 
 Write-Host ""
-Write-Host "[1/5] Converting IoStore/Zen packages to a legacy reference pak..." -ForegroundColor Cyan
+Write-Host "[1/6] Converting IoStore/Zen packages to an isolated legacy reference pak..." -ForegroundColor Cyan
 & $RetocExe to-legacy $PakDir $LegacyPak 2>&1 | Tee-Object -FilePath $RetocLog | Out-Host
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $LegacyPak)) {
     Write-Host "retoc failed to create the legacy package." -ForegroundColor Red
@@ -138,33 +138,29 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path $LegacyPak)) {
 }
 
 Write-Host ""
-Write-Host "[2/5] Listing converted packages..." -ForegroundColor Cyan
+Write-Host "[2/6] Listing converted packages..." -ForegroundColor Cyan
 & $UnrealPak $LegacyPak -List 2>&1 | Tee-Object -FilePath $AssetListLog | Out-Host
 
 Write-Host ""
-Write-Host "[3/5] Extracting legacy cooked packages for inspection/export..." -ForegroundColor Cyan
+Write-Host "[3/6] Extracting an inspection copy outside Content..." -ForegroundColor Cyan
 & $UnrealPak $LegacyPak "-Extract=$Stage" 2>&1 | Tee-Object -FilePath $ExtractLog | Out-Host
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Primary UnrealPak extract syntax failed; trying alternate syntax..." -ForegroundColor Yellow
     & $UnrealPak $LegacyPak -Extract $Stage 2>&1 | Tee-Object -FilePath $ExtractLog -Append | Out-Host
 }
 
-$Uassets = @(Get-ChildItem $Stage -Recurse -Filter "*.uasset" -File -ErrorAction SilentlyContinue)
+$CookedFiles = @(Get-ChildItem $Stage -Recurse -File -ErrorAction SilentlyContinue)
+$Uassets = @($CookedFiles | Where-Object { $_.Extension -ieq '.uasset' })
+Write-Host "Inspection extraction contains $($CookedFiles.Count) files and $($Uassets.Count) visible .uasset files." -ForegroundColor Green
 if ($Uassets.Count -eq 0) {
-    Write-Host "Conversion completed but no .uasset packages appeared after extraction." -ForegroundColor Red
-    Write-Host "Send me these two small logs:" -ForegroundColor Yellow
-    Write-Host "  ReferenceExtracted\Logs\retoc_to_legacy.txt" -ForegroundColor Yellow
-    Write-Host "  ReferenceExtracted\Logs\legacy_asset_list.txt" -ForegroundColor Yellow
-    exit 21
+    Write-Host "That is NOT treated as failure: CUE4Parse reads the converted pak directly in the next stage." -ForegroundColor DarkYellow
 }
 
-Write-Host "Recovered $($Uassets.Count) cooked .uasset packages." -ForegroundColor Green
-
 Write-Host ""
-Write-Host "[4/5] Keeping cooked packages OUTSIDE DEADBRICK Content..." -ForegroundColor Cyan
+Write-Host "[4/6] Keeping cooked packages OUTSIDE DEADBRICK Content..." -ForegroundColor Cyan
 Write-Host "Cooked game packages are not editor-native source assets." -ForegroundColor Yellow
-Write-Host "They stay isolated in ReferenceExtracted until converted/exported to normal editor formats." -ForegroundColor Yellow
-Write-Host "This prevents PACKAGE_FILE_TAG errors and broken materials/textures in Unreal Editor." -ForegroundColor Yellow
+Write-Host "They stay isolated in ReferenceExtracted and are never mounted as /Game assets." -ForegroundColor Yellow
+Write-Host "This prevents PACKAGE_FILE_TAG errors and the broken material/texture state from the previous build." -ForegroundColor Yellow
 
 $MarkerFile = Join-Path $ProjectRoot "Saved\LOTL_REFERENCE_IMPORT.txt"
 New-Item -ItemType Directory -Path (Split-Path -Parent $MarkerFile) -Force | Out-Null
@@ -173,18 +169,32 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $MarkerFile) -Force | Out
     "PakDir: $PakDir",
     "Retoc: $RetocExe",
     "LegacyPak: $LegacyPak",
-    "CookedUassetsRecovered: $($Uassets.Count)",
+    "InspectionFiles: $($CookedFiles.Count)",
+    "VisibleCookedUassets: $($Uassets.Count)",
     "InstalledIntoContent: False",
     "Stage: $Stage"
 ) | Set-Content $MarkerFile
 
 Write-Host ""
-Write-Host "[5/5] Generating the precise reference manifest and rebuilding DEADBRICK..." -ForegroundColor Cyan
+Write-Host "[5/6] Generating manifest and exporting editor-safe LOTL meshes/textures..." -ForegroundColor Cyan
 $ManifestScript = Join-Path $ProjectRoot "GENERATE_LOTL_MANIFEST.ps1"
 if (Test-Path $ManifestScript) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File $ManifestScript
 }
 
+$ExportScript = Join-Path $ProjectRoot "EXPORT_LOTL_EDITOR_ASSETS.ps1"
+if (Test-Path $ExportScript) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $ExportScript -LegacyPak $LegacyPak
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "LOTL cooked extraction succeeded, but the editor-safe export needs another pass." -ForegroundColor Yellow
+        Write-Host "The game itself can still be rebuilt safely without mounting cooked packages." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "EXPORT_LOTL_EDITOR_ASSETS.ps1 not found; skipping editor-safe conversion." -ForegroundColor Yellow
+}
+
+Write-Host ""
+Write-Host "[6/6] Rebuilding DEADBRICK, importing any GLB/PNG exports, and opening Unreal..." -ForegroundColor Cyan
 $Rebuild = Join-Path $ProjectRoot "REBUILD_AND_OPEN_UE58.bat"
 if (Test-Path $Rebuild) {
     & $Rebuild
