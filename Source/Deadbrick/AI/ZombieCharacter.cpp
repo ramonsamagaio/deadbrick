@@ -1,17 +1,22 @@
 #include "AI/ZombieCharacter.h"
+
 #include "AI/ZombieDirectorSubsystem.h"
 #include "AIController.h"
+#include "Animation/AnimSequence.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Reference/ReferenceAssetResolver.h"
 #include "UObject/ConstructorHelpers.h"
 
 AZombieCharacter::AZombieCharacter()
 {
     PrimaryActorTick.bCanEverTick = true;
     GetCharacterMovement()->MaxWalkSpeed = 230.0f;
+    GetCharacterMovement()->BrakingDecelerationWalking = 1200.0f;
 
     AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
     AIControllerClass = AAIController::StaticClass();
@@ -32,6 +37,7 @@ void AZombieCharacter::BeginPlay()
 {
     Super::BeginPlay();
     Health = MaxHealth;
+    TryApplyReferenceVisuals();
 }
 
 void AZombieCharacter::AcquireTarget()
@@ -81,28 +87,29 @@ void AZombieCharacter::Tick(float DeltaSeconds)
         bHasMoveTarget = true;
     }
 
-    if (!bHasMoveTarget) return;
-
-    const FVector Delta = MoveTarget - GetActorLocation();
-    const float Distance = Delta.Size2D();
-    if (CurrentTarget.IsValid() && Distance <= AttackDistanceCm)
+    if (bHasMoveTarget)
     {
-        if (AttackTimer <= 0.0f)
+        const FVector Delta = MoveTarget - GetActorLocation();
+        const float Distance = Delta.Size2D();
+        if (CurrentTarget.IsValid() && Distance <= AttackDistanceCm)
         {
-            AttackTimer = AttackCooldown;
-            UGameplayStatics::ApplyDamage(CurrentTarget.Get(), AttackDamage, GetController(), this, nullptr);
+            if (AttackTimer <= 0.0f)
+            {
+                AttackTimer = AttackCooldown;
+                UGameplayStatics::ApplyDamage(CurrentTarget.Get(), AttackDamage, GetController(), this, nullptr);
+            }
         }
-        return;
+        else if (Distance > 30.0f)
+        {
+            AddMovementInput(Delta.GetSafeNormal2D(), 1.0f);
+        }
+        else if (!CurrentTarget.IsValid())
+        {
+            bHasMoveTarget = false;
+        }
     }
 
-    if (Distance > 30.0f)
-    {
-        AddMovementInput(Delta.GetSafeNormal2D(), 1.0f);
-    }
-    else if (!CurrentTarget.IsValid())
-    {
-        bHasMoveTarget = false;
-    }
+    UpdateReferenceAnimation();
 }
 
 float AZombieCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
@@ -114,4 +121,44 @@ float AZombieCharacter::TakeDamage(float DamageAmount, FDamageEvent const& Damag
         Destroy();
     }
     return Applied;
+}
+
+void AZombieCharacter::TryApplyReferenceVisuals()
+{
+    FString MeshPath;
+    USkeletalMesh* ReferenceMesh = DeadbrickReferenceAssets::FindSkeletalMesh(
+        {TEXT("enemy"), TEXT("skeleton"), TEXT("goblin"), TEXT("creature"), TEXT("character")},
+        &MeshPath);
+
+    if (!ReferenceMesh || !GetMesh())
+    {
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK zombie: no cooked reference enemy mesh found; cube placeholder remains."));
+        return;
+    }
+
+    PlaceholderBody->SetVisibility(false, true);
+    GetMesh()->SetSkeletalMesh(ReferenceMesh);
+    GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -88.0f));
+    GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+
+    USkeleton* Skeleton = ReferenceMesh->GetSkeleton();
+    IdleAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(
+        Skeleton, {TEXT("idle"), TEXT("stand"), TEXT("breath")});
+    WalkAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(
+        Skeleton, {TEXT("walk"), TEXT("run"), TEXT("move")});
+
+    UE_LOG(LogTemp, Display, TEXT("DEADBRICK zombie reference visual bound: %s"), *MeshPath);
+}
+
+void AZombieCharacter::UpdateReferenceAnimation()
+{
+    if (!GetMesh()) return;
+
+    UAnimSequence* Desired = GetVelocity().SizeSquared2D() > FMath::Square(10.0f) ? WalkAnimation : IdleAnimation;
+    if (!Desired || Desired == CurrentAnimation) return;
+
+    CurrentAnimation = Desired;
+    GetMesh()->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+    GetMesh()->SetAnimation(Desired);
+    GetMesh()->Play(true);
 }
