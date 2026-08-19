@@ -16,13 +16,21 @@ enum class EDeadbrickItemType : uint8
     Cloth,
     Electronics,
     Plastic,
+    Wire,
+    Nails,
     Ammo9mm,
     RifleAmmo,
     ShotgunShells,
     CannedFood,
     WaterBottle,
+    PurifiedWater,
     MedicalSupplies,
+    Bandage,
     Battery,
     Fuel,
-    MechanicalParts
+    MechanicalParts,
+    MetalPlate,
+    RepairKit,
+    Molotov,
+    WoodenBarricade
 };
