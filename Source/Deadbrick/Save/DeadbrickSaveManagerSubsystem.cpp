@@ -9,17 +9,12 @@
 #include "Save/DeadbrickSaveGame.h"
 #include "World/DestructibleVoxelWorld.h"
 
-FString UDeadbrickSaveManagerSubsystem::ResolveSlot(const FString& SlotName) const
+bool UDeadbrickSaveManagerSubsystem::HasSave() const
 {
-    return SlotName.IsEmpty() ? DefaultSlotName : SlotName;
+    return UGameplayStatics::DoesSaveGameExist(DefaultSlotName, 0);
 }
 
-bool UDeadbrickSaveManagerSubsystem::HasSave(const FString& SlotName) const
-{
-    return UGameplayStatics::DoesSaveGameExist(ResolveSlot(SlotName), 0);
-}
-
-bool UDeadbrickSaveManagerSubsystem::SaveCurrentWorld(const FString& SlotName)
+bool UDeadbrickSaveManagerSubsystem::SaveCurrentWorld()
 {
     UWorld* World = GetWorld();
     if (!World) return false;
@@ -50,7 +45,7 @@ bool UDeadbrickSaveManagerSubsystem::SaveCurrentWorld(const FString& SlotName)
         }
     }
 
-    const bool bSaved = UGameplayStatics::SaveGameToSlot(Save, ResolveSlot(SlotName), 0);
+    const bool bSaved = UGameplayStatics::SaveGameToSlot(Save, DefaultSlotName, 0);
     if (GEngine)
     {
         GEngine->AddOnScreenDebugMessage(-1, 2.0f, bSaved ? FColor::Green : FColor::Red,
@@ -59,12 +54,12 @@ bool UDeadbrickSaveManagerSubsystem::SaveCurrentWorld(const FString& SlotName)
     return bSaved;
 }
 
-bool UDeadbrickSaveManagerSubsystem::LoadCurrentWorld(const FString& SlotName)
+bool UDeadbrickSaveManagerSubsystem::LoadCurrentWorld()
 {
     UWorld* World = GetWorld();
     if (!World) return false;
 
-    UDeadbrickSaveGame* Save = Cast<UDeadbrickSaveGame>(UGameplayStatics::LoadGameFromSlot(ResolveSlot(SlotName), 0));
+    UDeadbrickSaveGame* Save = Cast<UDeadbrickSaveGame>(UGameplayStatics::LoadGameFromSlot(DefaultSlotName, 0));
     if (!Save) return false;
 
     for (TActorIterator<ADestructibleVoxelWorld> It(World); It; ++It)
