@@ -45,9 +45,25 @@ int32 AProceduralCityGenerator::PickFloors(EDeadbrickDistrictType District, FRan
 
 void AProceduralCityGenerator::LoadReferencePropMeshes()
 {
-    ReferenceDoorMesh = DeadbrickReferenceAssets::FindStaticMesh({TEXT("door"), TEXT("gate"), TEXT("hatch")});
-    ReferenceWindowMesh = DeadbrickReferenceAssets::FindStaticMesh({TEXT("window"), TEXT("glass")});
-    ReferenceContainerMesh = DeadbrickReferenceAssets::FindStaticMesh({TEXT("container"), TEXT("crate"), TEXT("locker"), TEXT("chest"), TEXT("box")});
+    ReferenceDoorMeshes.Reset();
+    ReferenceWindowMeshes.Reset();
+    ReferenceContainerMeshes.Reset();
+
+    for (UStaticMesh* Mesh : DeadbrickReferenceAssets::FindStaticMeshes({TEXT("door"), TEXT("gate"), TEXT("hatch")}, 12))
+        if (Mesh) ReferenceDoorMeshes.Add(Mesh);
+    for (UStaticMesh* Mesh : DeadbrickReferenceAssets::FindStaticMeshes({TEXT("window"), TEXT("glass")}, 12))
+        if (Mesh) ReferenceWindowMeshes.Add(Mesh);
+    for (UStaticMesh* Mesh : DeadbrickReferenceAssets::FindStaticMeshes({TEXT("container"), TEXT("crate"), TEXT("locker"), TEXT("chest"), TEXT("box")}, 16))
+        if (Mesh) ReferenceContainerMeshes.Add(Mesh);
+
+    UE_LOG(LogTemp, Display, TEXT("DEADBRICK reference prop pools: %d doors, %d windows, %d containers"),
+        ReferenceDoorMeshes.Num(), ReferenceWindowMeshes.Num(), ReferenceContainerMeshes.Num());
+}
+
+UStaticMesh* AProceduralCityGenerator::PickReferenceMesh(const TArray<TObjectPtr<UStaticMesh>>& Pool, FRandomStream& Stream) const
+{
+    if (Pool.Num() == 0) return nullptr;
+    return Pool[Stream.RandRange(0, Pool.Num() - 1)].Get();
 }
 
 void AProceduralCityGenerator::GenerateCity()
@@ -120,26 +136,25 @@ void AProceduralCityGenerator::BuildBlock(int32 BlockX, int32 BlockY, EDeadbrick
 
         const int32 Floors = PickFloors(District, Stream);
         const int32 Z1 = Floors * FloorV;
-
         const EDeadbrickVoxelMaterial WallMaterial =
             (District == EDeadbrickDistrictType::Industrial || District == EDeadbrickDistrictType::Military)
                 ? EDeadbrickVoxelMaterial::Concrete
                 : EDeadbrickVoxelMaterial::Brick;
 
-        // Z=0 is the first structural/foundation layer. It touches the soil at Z=-1 directly,
-        // so structural support and CharacterMovement see one continuous physical world.
         BuildShell(FIntVector(X0, Y0, 0), FIntVector(X1, Y1, Z1), FloorV, WallMaterial, Stream);
 
-        if (ReferenceContainerMesh && Stream.FRand() < 0.65f)
+        if (ReferenceContainerMeshes.Num() > 0 && Stream.FRand() < 0.75f)
         {
+            UStaticMesh* ContainerMesh = PickReferenceMesh(ReferenceContainerMeshes, Stream);
             const FVector ContainerLocation = VoxelWorld->VoxelToWorld(FIntVector(X0 + 3, FMath::Max(1, Y0 - 5), 3));
             SpawnReferenceProp(
-                ReferenceContainerMesh,
+                ContainerMesh,
                 ContainerLocation,
                 FRotator(0.0f, Stream.FRandRange(-20.0f, 20.0f), 0.0f),
                 FVector(180.0f, 100.0f, 110.0f),
                 EDeadbrickVoxelMaterial::Metal,
-                110.0f);
+                110.0f,
+                EDeadbrickReferencePropRole::Container);
         }
 
         FDeadbrickBuildingSpec Spec;
@@ -159,7 +174,6 @@ void AProceduralCityGenerator::BuildShell(
     FRandomStream& Stream)
 {
     const int32 Wall = 2;
-
     VoxelWorld->FillBox(FIntVector(Min.X, Min.Y, Min.Z), FIntVector(Max.X, Max.Y, Min.Z + Wall - 1), EDeadbrickVoxelMaterial::Concrete);
 
     for (int32 Z = Min.Z; Z <= Max.Z; ++Z)
@@ -192,16 +206,17 @@ void AProceduralCityGenerator::BuildShell(
         VoxelWorld->SetVoxel(FIntVector(X, Min.Y + 1, Z), EDeadbrickVoxelMaterial::Air, 0);
     }
 
-    if (ReferenceDoorMesh)
+    if (UStaticMesh* DoorMesh = PickReferenceMesh(ReferenceDoorMeshes, Stream))
     {
         const int32 DoorMidZ = (Min.Z + 2 + DoorTop) / 2;
         SpawnReferenceProp(
-            ReferenceDoorMesh,
+            DoorMesh,
             VoxelWorld->VoxelToWorld(FIntVector(DoorCenter, Min.Y, DoorMidZ)),
             FRotator::ZeroRotator,
             FVector((DoorWidth + 1) * VoxelWorld->VoxelSizeCm, 16.0f, (DoorTop - Min.Z) * VoxelWorld->VoxelSizeCm),
             EDeadbrickVoxelMaterial::Wood,
-            90.0f);
+            90.0f,
+            EDeadbrickReferencePropRole::Door);
     }
 
     const int32 Width = Max.X - Min.X + 1;
@@ -225,16 +240,17 @@ void AProceduralCityGenerator::BuildShell(
                 VoxelWorld->SetVoxel(FIntVector(X, Min.Y + 1, Z), EDeadbrickVoxelMaterial::Air, 0);
             }
 
-            if (ReferenceWindowMesh)
+            if (UStaticMesh* WindowMesh = PickReferenceMesh(ReferenceWindowMeshes, Stream))
             {
                 const int32 WindowMidZ = (WindowBottom + WindowTop) / 2;
                 SpawnReferenceProp(
-                    ReferenceWindowMesh,
+                    WindowMesh,
                     VoxelWorld->VoxelToWorld(FIntVector(WindowCenter, Min.Y, WindowMidZ)),
                     FRotator::ZeroRotator,
                     FVector((WindowHalfWidth * 2 + 1) * VoxelWorld->VoxelSizeCm, 10.0f, (WindowTop - WindowBottom + 1) * VoxelWorld->VoxelSizeCm),
                     EDeadbrickVoxelMaterial::Glass,
-                    35.0f);
+                    35.0f,
+                    EDeadbrickReferencePropRole::Window);
             }
         }
     }
@@ -315,7 +331,8 @@ void AProceduralCityGenerator::SpawnReferenceProp(
     const FRotator& Rotation,
     const FVector& TargetDimensionsCm,
     EDeadbrickVoxelMaterial BreakMaterial,
-    float Health)
+    float Health,
+    EDeadbrickReferencePropRole Role)
 {
     if (!Mesh || !GetWorld() || !VoxelWorld) return;
 
@@ -325,6 +342,6 @@ void AProceduralCityGenerator::SpawnReferenceProp(
         AReferenceDestructibleProp::StaticClass(), WorldLocation, Rotation, SpawnParams);
     if (Prop)
     {
-        Prop->InitializeFromReference(Mesh, VoxelWorld, BreakMaterial, TargetDimensionsCm, Health);
+        Prop->InitializeFromReference(Mesh, VoxelWorld, BreakMaterial, TargetDimensionsCm, Health, Role);
     }
 }
