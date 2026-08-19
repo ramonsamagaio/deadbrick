@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 
 class UAnimSequence;
+class UMaterialInterface;
 class USkeletalMesh;
 class USkeleton;
 class UStaticMesh;
@@ -15,4 +16,5 @@ namespace DeadbrickReferenceAssets
     DEADBRICK_API UAnimSequence* FindAnimationForSkeleton(USkeleton* Skeleton, const TArray<FString>& PreferredKeywords, FString* OutObjectPath = nullptr);
     DEADBRICK_API UStaticMesh* FindStaticMesh(const TArray<FString>& PreferredKeywords, FString* OutObjectPath = nullptr);
     DEADBRICK_API TArray<UStaticMesh*> FindStaticMeshes(const TArray<FString>& PreferredKeywords, int32 MaxResults = 12);
+    DEADBRICK_API UMaterialInterface* FindMaterial(const TArray<FString>& PreferredKeywords, FString* OutObjectPath = nullptr);
 }
