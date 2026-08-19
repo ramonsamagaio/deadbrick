@@ -14,14 +14,11 @@ public:
     FString DefaultSlotName = TEXT("DEADBRICK_Autosave");
 
     UFUNCTION(BlueprintCallable, Category="Save")
-    bool SaveCurrentWorld(const FString& SlotName = TEXT(""));
+    bool SaveCurrentWorld();
 
     UFUNCTION(BlueprintCallable, Category="Save")
-    bool LoadCurrentWorld(const FString& SlotName = TEXT(""));
+    bool LoadCurrentWorld();
 
     UFUNCTION(BlueprintPure, Category="Save")
-    bool HasSave(const FString& SlotName = TEXT("")) const;
-
-private:
-    FString ResolveSlot(const FString& SlotName) const;
+    bool HasSave() const;
 };
