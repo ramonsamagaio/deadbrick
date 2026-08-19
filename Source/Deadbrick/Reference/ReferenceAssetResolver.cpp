@@ -36,6 +36,11 @@ namespace
         return Score;
     }
 
+    bool PackageNameBefore(const FAssetData& A, const FAssetData& B)
+    {
+        return A.PackageName.ToString() < B.PackageName.ToString();
+    }
+
     void GetAssetsByClass(const FTopLevelAssetPath& ClassPath, TArray<FAssetData>& OutAssets)
     {
         FAssetRegistryModule& RegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
@@ -56,7 +61,7 @@ namespace
         {
             const int32 ScoreA = ScoreAsset(A, Keywords);
             const int32 ScoreB = ScoreAsset(B, Keywords);
-            if (ScoreA == ScoreB) return A.PackageName.LexicalLess(B.PackageName);
+            if (ScoreA == ScoreB) return PackageNameBefore(A, B);
             return ScoreA > ScoreB;
         });
 
@@ -119,7 +124,7 @@ UAnimSequence* DeadbrickReferenceAssets::FindAnimationForSkeleton(USkeleton* Ske
     {
         const int32 ScoreA = ScoreAsset(A, PreferredKeywords);
         const int32 ScoreB = ScoreAsset(B, PreferredKeywords);
-        if (ScoreA == ScoreB) return A.PackageName.LexicalLess(B.PackageName);
+        if (ScoreA == ScoreB) return PackageNameBefore(A, B);
         return ScoreA > ScoreB;
     });
 
