@@ -7,6 +7,7 @@
 
 class ADestructibleVoxelWorld;
 class UStaticMesh;
+enum class EDeadbrickReferencePropRole : uint8;
 
 UENUM(BlueprintType)
 enum class EDeadbrickDistrictType : uint8
@@ -67,5 +68,5 @@ private:
     void BuildShell(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels, EDeadbrickVoxelMaterial WallMaterial, FRandomStream& Stream);
     void BuildInterior(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels, FRandomStream& Stream);
     void BuildVoxelStairwell(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels);
-    void SpawnReferenceProp(UStaticMesh* Mesh, const FVector& WorldLocation, const FRotator& Rotation, const FVector& TargetDimensionsCm, EDeadbrickVoxelMaterial BreakMaterial, float Health);
+    void SpawnReferenceProp(UStaticMesh* Mesh, const FVector& WorldLocation, const FRotator& Rotation, const FVector& TargetDimensionsCm, EDeadbrickVoxelMaterial BreakMaterial, float Health, EDeadbrickReferencePropRole Role);
 };
