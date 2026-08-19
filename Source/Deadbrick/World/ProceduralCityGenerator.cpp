@@ -332,7 +332,7 @@ void AProceduralCityGenerator::SpawnReferenceProp(
     const FVector& TargetDimensionsCm,
     EDeadbrickVoxelMaterial BreakMaterial,
     float Health,
-    EDeadbrickReferencePropRole Role)
+    EDeadbrickReferencePropRole PropRole)
 {
     if (!Mesh || !GetWorld() || !VoxelWorld) return;
 
@@ -342,6 +342,6 @@ void AProceduralCityGenerator::SpawnReferenceProp(
         AReferenceDestructibleProp::StaticClass(), WorldLocation, Rotation, SpawnParams);
     if (Prop)
     {
-        Prop->InitializeFromReference(Mesh, VoxelWorld, BreakMaterial, TargetDimensionsCm, Health, Role);
+        Prop->InitializeFromReference(Mesh, VoxelWorld, BreakMaterial, TargetDimensionsCm, Health, PropRole);
     }
 }
