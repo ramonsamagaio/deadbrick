@@ -23,13 +23,36 @@ AZombieCharacter::AZombieCharacter()
     AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
     AIControllerClass = AAIController::StaticClass();
 
-    PlaceholderBody = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderBody"));
-    PlaceholderBody->SetupAttachment(GetRootComponent());
-    PlaceholderBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-    PlaceholderBody->SetRelativeScale3D(FVector(0.55f, 0.55f, 1.65f));
-
     static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
-    if (CubeMesh.Succeeded()) PlaceholderBody->SetStaticMesh(CubeMesh.Object);
+
+    auto ConfigurePart = [&](UStaticMeshComponent* Part, const FVector& Location, const FVector& Scale)
+    {
+        Part->SetupAttachment(GetRootComponent());
+        Part->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Part->SetRelativeLocation(Location);
+        Part->SetRelativeScale3D(Scale);
+        if (CubeMesh.Succeeded()) Part->SetStaticMesh(CubeMesh.Object);
+    };
+
+    PlaceholderBody = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderBody"));
+    ConfigurePart(PlaceholderBody, FVector(0.0f, 0.0f, 12.0f), FVector(0.34f, 0.25f, 0.48f));
+
+    PlaceholderHead = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderHead"));
+    ConfigurePart(PlaceholderHead, FVector(0.0f, 0.0f, 69.0f), FVector(0.25f, 0.24f, 0.27f));
+
+    PlaceholderLeftArm = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderLeftArm"));
+    ConfigurePart(PlaceholderLeftArm, FVector(4.0f, -32.0f, 22.0f), FVector(0.12f, 0.10f, 0.42f));
+    PlaceholderLeftArm->SetRelativeRotation(FRotator(-54.0f, 0.0f, -7.0f));
+
+    PlaceholderRightArm = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderRightArm"));
+    ConfigurePart(PlaceholderRightArm, FVector(4.0f, 32.0f, 22.0f), FVector(0.12f, 0.10f, 0.42f));
+    PlaceholderRightArm->SetRelativeRotation(FRotator(-58.0f, 0.0f, 7.0f));
+
+    PlaceholderLeftLeg = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderLeftLeg"));
+    ConfigurePart(PlaceholderLeftLeg, FVector(0.0f, -13.0f, -46.0f), FVector(0.14f, 0.13f, 0.45f));
+
+    PlaceholderRightLeg = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderRightLeg"));
+    ConfigurePart(PlaceholderRightLeg, FVector(0.0f, 13.0f, -46.0f), FVector(0.14f, 0.13f, 0.45f));
 }
 
 void AZombieCharacter::BeginPlay()
@@ -115,7 +138,10 @@ void AZombieCharacter::Tick(float DeltaSeconds)
         }
     }
 
-    UpdateReferenceAnimation();
+    if (bUsingFallbackZombie)
+        UpdateFallbackAnimation(DeltaSeconds);
+    else
+        UpdateReferenceAnimation();
 }
 
 float AZombieCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
@@ -140,10 +166,50 @@ float AZombieCharacter::TakeDamage(float DamageAmount, FDamageEvent const& Damag
         }
         else
         {
-            SetLifeSpan(1.0f);
+            // Even the asset-free fallback now has a readable death instead of simply vanishing.
+            SetActorRotation(GetActorRotation() + FRotator(0.0f, 0.0f, 82.0f));
+            SetLifeSpan(2.2f);
         }
     }
     return Applied;
+}
+
+void AZombieCharacter::SetFallbackVisible(bool bVisible)
+{
+    if (PlaceholderBody) PlaceholderBody->SetVisibility(bVisible, true);
+    if (PlaceholderHead) PlaceholderHead->SetVisibility(bVisible, true);
+    if (PlaceholderLeftArm) PlaceholderLeftArm->SetVisibility(bVisible, true);
+    if (PlaceholderRightArm) PlaceholderRightArm->SetVisibility(bVisible, true);
+    if (PlaceholderLeftLeg) PlaceholderLeftLeg->SetVisibility(bVisible, true);
+    if (PlaceholderRightLeg) PlaceholderRightLeg->SetVisibility(bVisible, true);
+}
+
+void AZombieCharacter::UpdateFallbackAnimation(float DeltaSeconds)
+{
+    FallbackAnimTime += DeltaSeconds;
+
+    const float Speed = GetVelocity().Size2D();
+    const float MoveAlpha = FMath::Clamp(Speed / FMath::Max(1.0f, GetCharacterMovement()->MaxWalkSpeed), 0.0f, 1.0f);
+    const float Phase = FMath::Sin(FallbackAnimTime * 7.0f);
+    const float CounterPhase = -Phase;
+    const bool bAttacking = CurrentTarget.IsValid() && AttackTimer > AttackCooldown - 0.30f;
+
+    if (PlaceholderBody)
+    {
+        PlaceholderBody->SetRelativeRotation(FRotator(-7.0f + Phase * 2.0f * MoveAlpha, 0.0f, Phase * 2.0f * MoveAlpha));
+        PlaceholderBody->SetRelativeLocation(FVector(0.0f, 0.0f, 12.0f + FMath::Abs(Phase) * 2.5f * MoveAlpha));
+    }
+
+    if (PlaceholderHead)
+        PlaceholderHead->SetRelativeRotation(FRotator(-10.0f + Phase * 3.0f, Phase * 6.0f, CounterPhase * 3.0f));
+
+    const float ArmBase = bAttacking ? -92.0f : -56.0f;
+    const float ArmSwing = bAttacking ? 12.0f : 18.0f * MoveAlpha;
+    if (PlaceholderLeftArm) PlaceholderLeftArm->SetRelativeRotation(FRotator(ArmBase + Phase * ArmSwing, 0.0f, -9.0f));
+    if (PlaceholderRightArm) PlaceholderRightArm->SetRelativeRotation(FRotator(ArmBase + CounterPhase * ArmSwing, 0.0f, 9.0f));
+
+    if (PlaceholderLeftLeg) PlaceholderLeftLeg->SetRelativeRotation(FRotator(Phase * 24.0f * MoveAlpha, 0.0f, 0.0f));
+    if (PlaceholderRightLeg) PlaceholderRightLeg->SetRelativeRotation(FRotator(CounterPhase * 24.0f * MoveAlpha, 0.0f, 0.0f));
 }
 
 void AZombieCharacter::TryApplyReferenceVisuals()
@@ -153,13 +219,16 @@ void AZombieCharacter::TryApplyReferenceVisuals()
 
     if (ReferenceMeshes.Num() == 0 || !GetMesh())
     {
-        UE_LOG(LogTemp, Display, TEXT("DEADBRICK zombie: no cooked reference enemy mesh found; cube placeholder remains."));
+        bUsingFallbackZombie = true;
+        SetFallbackVisible(true);
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK zombie: no cooked reference enemy mesh found; articulated zombie fallback active."));
         return;
     }
 
     const int32 Index = static_cast<int32>(GetUniqueID() % static_cast<uint32>(ReferenceMeshes.Num()));
     USkeletalMesh* ReferenceMesh = ReferenceMeshes[Index];
-    PlaceholderBody->SetVisibility(false, true);
+    bUsingFallbackZombie = false;
+    SetFallbackVisible(false);
     GetMesh()->SetSkeletalMesh(ReferenceMesh);
     GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -88.0f));
     GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
