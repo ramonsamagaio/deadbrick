@@ -34,6 +34,9 @@ public:
     UFUNCTION()
     void ActivatePhysics();
 
+    UFUNCTION(BlueprintCallable, Category="Voxel|Physics")
+    void PushFromGameplay(const FVector& Impulse);
+
 private:
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<UProceduralMeshComponent> MeshComponent;
