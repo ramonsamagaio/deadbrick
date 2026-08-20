@@ -12,9 +12,9 @@
 #include "Engine/LocalFogVolume.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
-#include "Reference/ReferenceAssetResolver.h"
 #include "UObject/ConstructorHelpers.h"
 #include "World/DestructibleVoxelWorld.h"
 #include "World/ProceduralCityGenerator.h"
@@ -46,6 +46,7 @@ ADeadbrickEnvironmentDirector::ADeadbrickEnvironmentDirector()
     SunLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("SunLight"));
     SunLight->SetupAttachment(SceneRoot);
     SunLight->SetMobility(EComponentMobility::Movable);
+    SunLight->SetForwardShadingPriority(10);
 
     SkyLight = CreateDefaultSubobject<USkyLightComponent>(TEXT("SkyLight"));
     SkyLight->SetupAttachment(SceneRoot);
@@ -113,59 +114,121 @@ void ADeadbrickEnvironmentDirector::InitializeForCity(
     if (bInitialized || !CityGenerator || !VoxelWorld || !GetWorld()) return;
     bInitialized = true;
 
+    DisablePreexistingEnvironment();
     ConfigureLightingAndGrade();
     ConfigureInstanceMaterials();
     PopulateStreetDressing(CityGenerator, VoxelWorld);
     SpawnLocalAtmospherePockets(CityGenerator, VoxelWorld);
 
     UE_LOG(LogTemp, Display,
-        TEXT("DEADBRICK ENVIRONMENT READY | sky atmosphere + overcast sun + volumetric height fog + local haze + global grade + instanced street life"));
+        TEXT("DEADBRICK ENVIRONMENT READY | legacy lights suppressed | balanced sun | light volumetric fog | local haze | instanced dressing"));
+}
+
+void ADeadbrickEnvironmentDirector::DisablePreexistingEnvironment()
+{
+    if (!GetWorld()) return;
+
+    TArray<AActor*> Actors;
+    UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), Actors);
+
+    int32 DisabledDirectional = 0;
+    int32 DisabledSky = 0;
+    int32 DisabledFog = 0;
+    int32 DisabledAtmosphere = 0;
+    int32 DisabledPost = 0;
+
+    for (AActor* Actor : Actors)
+    {
+        if (!Actor || Actor == this) continue;
+
+        if (UDirectionalLightComponent* Directional = Actor->FindComponentByClass<UDirectionalLightComponent>())
+        {
+            Directional->SetVisibility(false, true);
+            Directional->SetIntensity(0.0f);
+            Directional->SetForwardShadingPriority(0);
+            ++DisabledDirectional;
+        }
+
+        if (USkyLightComponent* ExistingSky = Actor->FindComponentByClass<USkyLightComponent>())
+        {
+            ExistingSky->SetVisibility(false, true);
+            ExistingSky->SetIntensity(0.0f);
+            ++DisabledSky;
+        }
+
+        if (UExponentialHeightFogComponent* ExistingFog = Actor->FindComponentByClass<UExponentialHeightFogComponent>())
+        {
+            ExistingFog->SetVisibility(false, true);
+            ExistingFog->SetFogDensity(0.0f);
+            ExistingFog->SetVolumetricFog(false);
+            ++DisabledFog;
+        }
+
+        if (USkyAtmosphereComponent* ExistingAtmosphere = Actor->FindComponentByClass<USkyAtmosphereComponent>())
+        {
+            ExistingAtmosphere->SetVisibility(false, true);
+            ++DisabledAtmosphere;
+        }
+
+        if (UPostProcessComponent* ExistingPost = Actor->FindComponentByClass<UPostProcessComponent>())
+        {
+            ExistingPost->BlendWeight = 0.0f;
+            ExistingPost->Deactivate();
+            ++DisabledPost;
+        }
+    }
+
+    UE_LOG(LogTemp, Display,
+        TEXT("DEADBRICK environment takeover | directional=%d sky=%d fog=%d atmosphere=%d post=%d disabled"),
+        DisabledDirectional, DisabledSky, DisabledFog, DisabledAtmosphere, DisabledPost);
 }
 
 void ADeadbrickEnvironmentDirector::ConfigureLightingAndGrade()
 {
-    // Cloudy late-day lighting: readable enough for scavenging, but with long cool shadows and warm
-    // practical lights. The directional light uses lux in UE5's physical-lighting workflow.
-    SetActorRotation(FRotator(-34.0f, -28.0f, 0.0f));
+    SetActorRotation(FRotator(-32.0f, -30.0f, 0.0f));
 
     if (SunLight)
     {
-        SunLight->SetIntensity(18000.0f);
-        SunLight->SetLightColor(FLinearColor(0.82f, 0.88f, 0.92f));
-        SunLight->SetIndirectLightingIntensity(0.85f);
+        // The previous 18,000 intensity was physically plausible only with a fully calibrated exposure
+        // pipeline. In the template map it stacked with an existing sun and blew the image to white.
+        SunLight->SetIntensity(7.5f);
+        SunLight->SetLightColor(FLinearColor(0.74f, 0.80f, 0.86f));
+        SunLight->SetIndirectLightingIntensity(0.70f);
         SunLight->SetAtmosphereSunLight(true);
         SunLight->SetAtmosphereSunLightIndex(0);
+        SunLight->SetForwardShadingPriority(10);
+        SunLight->SetVolumetricScatteringIntensity(0.65f);
         SunLight->bEnableLightShaftOcclusion = true;
         SunLight->bCastShadowsOnAtmosphere = true;
     }
 
     if (SkyLight)
     {
-        SkyLight->SetIntensity(0.70f);
-        SkyLight->SetIndirectLightingIntensity(1.10f);
-        SkyLight->SetLightColor(FLinearColor(0.72f, 0.80f, 0.88f));
-        SkyLight->SetLowerHemisphereColor(FLinearColor(0.035f, 0.045f, 0.04f));
+        SkyLight->SetIntensity(0.42f);
+        SkyLight->SetIndirectLightingIntensity(0.80f);
+        SkyLight->SetLightColor(FLinearColor(0.61f, 0.69f, 0.76f));
+        SkyLight->SetLowerHemisphereColor(FLinearColor(0.022f, 0.027f, 0.025f));
         SkyLight->SetRealTimeCapture(true);
     }
 
     if (HeightFog)
     {
-        HeightFog->SetFogDensity(0.011f);
-        HeightFog->SetFogHeightFalloff(0.18f);
-        HeightFog->SetFogInscatteringColor(FLinearColor(0.16f, 0.22f, 0.24f));
-        HeightFog->SetFogMaxOpacity(0.72f);
-        HeightFog->SetStartDistance(650.0f);
-        HeightFog->SetSecondFogDensity(0.0045f);
-        HeightFog->SetSecondFogHeightFalloff(0.08f);
-        HeightFog->SetSecondFogHeightOffset(-90.0f);
+        HeightFog->SetFogDensity(0.0042f);
+        HeightFog->SetFogHeightFalloff(0.22f);
+        HeightFog->SetFogInscatteringColor(FLinearColor(0.10f, 0.14f, 0.15f));
+        HeightFog->SetFogMaxOpacity(0.48f);
+        HeightFog->SetStartDistance(1050.0f);
+        HeightFog->SetSecondFogDensity(0.0018f);
+        HeightFog->SetSecondFogHeightFalloff(0.10f);
+        HeightFog->SetSecondFogHeightOffset(-120.0f);
 
         HeightFog->SetVolumetricFog(true);
-        HeightFog->SetVolumetricFogScatteringDistribution(0.18f);
-        HeightFog->SetVolumetricFogAlbedo(FColor(205, 218, 214));
-        HeightFog->SetVolumetricFogExtinctionScale(0.72f);
-        HeightFog->SetVolumetricFogDistance(8500.0f);
-        HeightFog->SetVolumetricFogStartDistance(150.0f);
-        HeightFog->SetVolumetricFogNearFadeInDistance(300.0f);
+        HeightFog->SetVolumetricFogScatteringDistribution(0.12f);
+        HeightFog->SetVolumetricFogAlbedo(FColor(188, 201, 197));
+        HeightFog->SetVolumetricFogExtinctionScale(0.34f);
+        HeightFog->SetVolumetricFogDistance(5200.0f);
+        HeightFog->SetVolumetricFogStartDistance(450.0f);
+        HeightFog->SetVolumetricFogNearFadeInDistance(450.0f);
     }
 
     if (PostProcess)
@@ -173,35 +236,35 @@ void ADeadbrickEnvironmentDirector::ConfigureLightingAndGrade()
         FPostProcessSettings& Settings = PostProcess->Settings;
 
         Settings.bOverride_AutoExposureBias = true;
-        Settings.AutoExposureBias = -0.35f;
+        Settings.AutoExposureBias = -0.65f;
 
         Settings.bOverride_ColorSaturation = true;
-        Settings.ColorSaturation = FVector4(0.82f, 0.87f, 0.83f, 1.0f);
+        Settings.ColorSaturation = FVector4(0.90f, 0.93f, 0.91f, 1.0f);
 
         Settings.bOverride_ColorContrast = true;
-        Settings.ColorContrast = FVector4(1.07f, 1.06f, 1.05f, 1.0f);
+        Settings.ColorContrast = FVector4(1.04f, 1.04f, 1.03f, 1.0f);
 
         Settings.bOverride_ColorOffsetShadows = true;
-        Settings.ColorOffsetShadows = FVector4(-0.008f, 0.004f, 0.012f, 0.0f);
+        Settings.ColorOffsetShadows = FVector4(-0.004f, 0.002f, 0.006f, 0.0f);
 
         Settings.bOverride_ColorGainHighlights = true;
-        Settings.ColorGainHighlights = FVector4(1.03f, 1.015f, 0.97f, 1.0f);
+        Settings.ColorGainHighlights = FVector4(1.015f, 1.005f, 0.98f, 1.0f);
 
         Settings.bOverride_BloomIntensity = true;
-        Settings.BloomIntensity = 0.28f;
+        Settings.BloomIntensity = 0.12f;
 
         Settings.bOverride_VignetteIntensity = true;
-        Settings.VignetteIntensity = 0.19f;
+        Settings.VignetteIntensity = 0.12f;
 
         Settings.bOverride_MotionBlurAmount = true;
-        Settings.MotionBlurAmount = 0.08f;
+        Settings.MotionBlurAmount = 0.03f;
 
         Settings.bOverride_FilmSlope = true;
-        Settings.FilmSlope = 0.92f;
+        Settings.FilmSlope = 0.90f;
         Settings.bOverride_FilmToe = true;
-        Settings.FilmToe = 0.48f;
+        Settings.FilmToe = 0.46f;
         Settings.bOverride_FilmShoulder = true;
-        Settings.FilmShoulder = 0.23f;
+        Settings.FilmShoulder = 0.25f;
     }
 }
 
@@ -210,23 +273,23 @@ void ADeadbrickEnvironmentDirector::ConfigureInstanceMaterials()
     if (!BasicShapeMaterial) return;
 
     if (UMaterialInstanceDynamic* WeedMaterial = MakeTintedMaterial(
-        this, BasicShapeMaterial, FLinearColor(0.105f, 0.16f, 0.055f), 0.96f))
+        this, BasicShapeMaterial, FLinearColor(0.085f, 0.13f, 0.045f), 0.96f))
         WeedInstances->SetMaterial(0, WeedMaterial);
 
     if (UMaterialInstanceDynamic* ShrubMaterial = MakeTintedMaterial(
-        this, BasicShapeMaterial, FLinearColor(0.065f, 0.105f, 0.042f), 0.93f))
+        this, BasicShapeMaterial, FLinearColor(0.052f, 0.085f, 0.034f), 0.94f))
         ShrubInstances->SetMaterial(0, ShrubMaterial);
 
     if (UMaterialInstanceDynamic* TrashMaterial = MakeTintedMaterial(
-        this, BasicShapeMaterial, FLinearColor(0.115f, 0.105f, 0.09f), 0.82f))
+        this, BasicShapeMaterial, FLinearColor(0.095f, 0.085f, 0.075f), 0.84f))
         TrashInstances->SetMaterial(0, TrashMaterial);
 
     if (UMaterialInstanceDynamic* PoleMaterial = MakeTintedMaterial(
-        this, BasicShapeMaterial, FLinearColor(0.045f, 0.052f, 0.05f), 0.72f))
+        this, BasicShapeMaterial, FLinearColor(0.035f, 0.040f, 0.039f), 0.75f))
         PoleInstances->SetMaterial(0, PoleMaterial);
 
     if (UMaterialInstanceDynamic* LampMaterial = MakeTintedMaterial(
-        this, BasicShapeMaterial, FLinearColor(0.18f, 0.15f, 0.09f), 0.58f))
+        this, BasicShapeMaterial, FLinearColor(0.14f, 0.11f, 0.065f), 0.62f))
         LampHeadInstances->SetMaterial(0, LampMaterial);
 }
 
@@ -242,29 +305,27 @@ void ADeadbrickEnvironmentDirector::PopulateStreetDressing(
     PoleInstances->ClearInstances();
     LampHeadInstances->ClearInstances();
 
+    const FVector WorldOrigin = VoxelWorld->GetActorLocation();
     const float BlockCm = CityGenerator->BlockSizeMeters * 100.0f;
     const float StreetCm = CityGenerator->StreetWidthMeters * 100.0f;
     const float StepCm = BlockCm + StreetCm;
-    const float GroundZ = VoxelWorld->GetActorLocation().Z + VoxelWorld->VoxelSizeCm * 1.55f;
+    const float GroundZ = WorldOrigin.Z + VoxelWorld->VoxelSizeCm * 1.55f;
     FRandomStream Stream(CityGenerator->Seed ^ 0x5A17C3);
 
-    // Sidewalk-edge weeds and debris are deliberately concentrated at curb seams and building
-    // margins. This gives the streets parallax and scale cues without putting hundreds of Actors in
-    // the world. HISM keeps all of these as a handful of draw calls.
     for (int32 BY = 0; BY < CityGenerator->BlocksPerAxis; ++BY)
     for (int32 BX = 0; BX < CityGenerator->BlocksPerAxis; ++BX)
     {
-        const float BlockX0 = StreetCm + BX * StepCm;
-        const float BlockY0 = StreetCm + BY * StepCm;
+        const float BlockX0 = WorldOrigin.X + StreetCm + BX * StepCm;
+        const float BlockY0 = WorldOrigin.Y + StreetCm + BY * StepCm;
         const float BlockX1 = BlockX0 + BlockCm;
         const float BlockY1 = BlockY0 + BlockCm;
 
-        for (float Along = 180.0f; Along < BlockCm - 180.0f; Along += Stream.FRandRange(240.0f, 410.0f))
+        for (float Along = 180.0f; Along < BlockCm - 180.0f; Along += Stream.FRandRange(280.0f, 450.0f))
         {
-            const float Jitter = Stream.FRandRange(-55.0f, 55.0f);
-            const float SideInset = Stream.FRandRange(65.0f, 125.0f);
-            const float WeedScale = Stream.FRandRange(0.12f, 0.28f);
-            const float WeedHeight = Stream.FRandRange(0.32f, 0.62f);
+            const float Jitter = Stream.FRandRange(-45.0f, 45.0f);
+            const float SideInset = Stream.FRandRange(70.0f, 120.0f);
+            const float WeedScale = Stream.FRandRange(0.10f, 0.24f);
+            const float WeedHeight = Stream.FRandRange(0.28f, 0.55f);
 
             const FVector Positions[4] =
             {
@@ -276,50 +337,51 @@ void ADeadbrickEnvironmentDirector::PopulateStreetDressing(
 
             for (const FVector& Position : Positions)
             {
-                const FRotator Rotation(
-                    Stream.FRandRange(-8.0f, 8.0f),
-                    Stream.FRandRange(-180.0f, 180.0f),
-                    Stream.FRandRange(-8.0f, 8.0f));
                 WeedInstances->AddInstance(
-                    FTransform(Rotation, Position, FVector(WeedScale, WeedScale, WeedHeight)), true);
+                    FTransform(
+                        FRotator(Stream.FRandRange(-7.0f, 7.0f), Stream.FRandRange(-180.0f, 180.0f), Stream.FRandRange(-7.0f, 7.0f)),
+                        Position,
+                        FVector(WeedScale, WeedScale, WeedHeight)),
+                    true);
 
-                if (Stream.FRand() < 0.17f)
+                if (Stream.FRand() < 0.14f)
                 {
                     TrashInstances->AddInstance(
                         FTransform(
                             FRotator(Stream.FRandRange(-25.0f, 25.0f), Stream.FRandRange(-180.0f, 180.0f), Stream.FRandRange(-25.0f, 25.0f)),
-                            Position + FVector(Stream.FRandRange(-55.0f, 55.0f), Stream.FRandRange(-55.0f, 55.0f), 5.0f),
-                            FVector(Stream.FRandRange(0.08f, 0.18f), Stream.FRandRange(0.06f, 0.16f), Stream.FRandRange(0.025f, 0.08f))),
+                            Position + FVector(Stream.FRandRange(-50.0f, 50.0f), Stream.FRandRange(-50.0f, 50.0f), 5.0f),
+                            FVector(Stream.FRandRange(0.07f, 0.16f), Stream.FRandRange(0.05f, 0.14f), Stream.FRandRange(0.025f, 0.07f))),
                         true);
                 }
             }
         }
 
-        // Sparse scrub in forgotten corners. The asymmetry is intentional so the procedural city
-        // does not read as four identical clean quadrants.
-        const int32 ShrubsPerBlock = Stream.RandRange(3, 7);
+        const int32 ShrubsPerBlock = Stream.RandRange(2, 5);
         for (int32 Index = 0; Index < ShrubsPerBlock; ++Index)
         {
             const bool bXSide = Stream.FRand() < 0.5f;
             const float X = bXSide
-                ? (Stream.FRand() < 0.5f ? BlockX0 + 130.0f : BlockX1 - 130.0f)
-                : Stream.FRandRange(BlockX0 + 160.0f, BlockX1 - 160.0f);
+                ? (Stream.FRand() < 0.5f ? BlockX0 + 135.0f : BlockX1 - 135.0f)
+                : Stream.FRandRange(BlockX0 + 170.0f, BlockX1 - 170.0f);
             const float Y = !bXSide
-                ? (Stream.FRand() < 0.5f ? BlockY0 + 130.0f : BlockY1 - 130.0f)
-                : Stream.FRandRange(BlockY0 + 160.0f, BlockY1 - 160.0f);
-            const float Scale = Stream.FRandRange(0.17f, 0.34f);
+                ? (Stream.FRand() < 0.5f ? BlockY0 + 135.0f : BlockY1 - 135.0f)
+                : Stream.FRandRange(BlockY0 + 170.0f, BlockY1 - 170.0f);
+            const float Scale = Stream.FRandRange(0.15f, 0.30f);
             ShrubInstances->AddInstance(
                 FTransform(
                     FRotator(0.0f, Stream.FRandRange(-180.0f, 180.0f), 0.0f),
-                    FVector(X, Y, GroundZ + 10.0f),
-                    FVector(Scale, Scale * Stream.FRandRange(0.72f, 1.20f), Scale * Stream.FRandRange(0.62f, 1.05f))),
+                    FVector(X, Y, GroundZ + 8.0f),
+                    FVector(Scale, Scale * Stream.FRandRange(0.76f, 1.16f), Scale * Stream.FRandRange(0.65f, 1.0f))),
                 true);
         }
 
-        // Two practical lights per block, offset from corners so silhouettes and fog have alternating
-        // pools of warm light. They are intentionally sparse instead of turning the city into a runway.
-        SpawnStreetLamp(FVector(BlockX0 + 115.0f, BlockY0 + 115.0f, GroundZ), 45.0f);
-        SpawnStreetLamp(FVector(BlockX1 - 115.0f, BlockY1 - 115.0f, GroundZ), -135.0f);
+        // One real dynamic light per block is enough for depth. A previous two-per-block setup with
+        // strong volumetric scattering was needlessly expensive for a prototype district.
+        const bool bAlternate = ((BX + BY) & 1) != 0;
+        const FVector LampBase = bAlternate
+            ? FVector(BlockX1 - 115.0f, BlockY1 - 115.0f, GroundZ)
+            : FVector(BlockX0 + 115.0f, BlockY0 + 115.0f, GroundZ);
+        SpawnStreetLamp(LampBase, bAlternate ? -135.0f : 45.0f);
     }
 
     UE_LOG(LogTemp, Display,
@@ -350,11 +412,11 @@ void ADeadbrickEnvironmentDirector::SpawnStreetLamp(const FVector& WorldLocation
     AddInstanceComponent(Practical);
     Practical->SetupAttachment(SceneRoot);
     Practical->SetMobility(EComponentMobility::Movable);
-    Practical->SetIntensity(1850.0f);
-    Practical->SetAttenuationRadius(1050.0f);
-    Practical->SetLightColor(FLinearColor(1.0f, 0.53f, 0.19f));
+    Practical->SetIntensity(720.0f);
+    Practical->SetAttenuationRadius(720.0f);
+    Practical->SetLightColor(FLinearColor(1.0f, 0.50f, 0.17f));
     Practical->SetCastShadows(false);
-    Practical->VolumetricScatteringIntensity = 1.65f;
+    Practical->VolumetricScatteringIntensity = 0.15f;
     Practical->RegisterComponent();
     Practical->SetWorldLocation(LampLocation - FVector(0.0f, 0.0f, 18.0f));
 }
@@ -365,17 +427,18 @@ void ADeadbrickEnvironmentDirector::SpawnLocalAtmospherePockets(
 {
     if (!GetWorld() || !CityGenerator || !VoxelWorld) return;
 
+    const FVector WorldOrigin = VoxelWorld->GetActorLocation();
     const float BlockCm = CityGenerator->BlockSizeMeters * 100.0f;
     const float StreetCm = CityGenerator->StreetWidthMeters * 100.0f;
     const float StepCm = BlockCm + StreetCm;
-    const float BaseZ = VoxelWorld->GetActorLocation().Z + 115.0f;
+    const float BaseZ = WorldOrigin.Z + 105.0f;
 
     for (int32 BY = 0; BY < CityGenerator->BlocksPerAxis; ++BY)
     for (int32 BX = 0; BX < CityGenerator->BlocksPerAxis; ++BX)
     {
         const FVector BlockCenter(
-            StreetCm + BX * StepCm + BlockCm * 0.5f,
-            StreetCm + BY * StepCm + BlockCm * 0.5f,
+            WorldOrigin.X + StreetCm + BX * StepCm + BlockCm * 0.5f,
+            WorldOrigin.Y + StreetCm + BY * StepCm + BlockCm * 0.5f,
             BaseZ);
 
         FActorSpawnParameters Params;
@@ -384,16 +447,16 @@ void ADeadbrickEnvironmentDirector::SpawnLocalAtmospherePockets(
             ALocalFogVolume::StaticClass(), BlockCenter, FRotator::ZeroRotator, Params);
         if (!LocalFog) continue;
 
-        LocalFog->SetActorScale3D(FVector(10.5f));
+        LocalFog->SetActorScale3D(FVector(7.5f));
         if (ULocalFogVolumeComponent* Component = LocalFog->GetComponent())
         {
-            Component->SetRadialFogExtinction(0.012f);
-            Component->SetHeightFogExtinction(0.0065f);
-            Component->SetHeightFogFalloff(950.0f);
-            Component->SetHeightFogOffset(-0.22f);
-            Component->SetFogPhaseG(0.18f);
-            Component->SetFogAlbedo(FLinearColor(0.69f, 0.76f, 0.72f));
-            Component->SetFogEmissive(FLinearColor(0.0f, 0.0f, 0.0f));
+            Component->SetRadialFogExtinction(0.0040f);
+            Component->SetHeightFogExtinction(0.0022f);
+            Component->SetHeightFogFalloff(1050.0f);
+            Component->SetHeightFogOffset(-0.18f);
+            Component->SetFogPhaseG(0.12f);
+            Component->SetFogAlbedo(FLinearColor(0.63f, 0.69f, 0.66f));
+            Component->SetFogEmissive(FLinearColor::Black);
         }
     }
 }
