@@ -231,7 +231,10 @@ void ADestructibleVoxelWorld::QueueDetachedComponentForPhysics(const TArray<FInt
 
     while (Remaining.Num() > 0)
     {
-        const FIntVector Seed = *Remaining.CreateConstIterator();
+        TSet<FIntVector>::TConstIterator SeedIt = Remaining.CreateConstIterator();
+        if (!SeedIt) break;
+        const FIntVector Seed = *SeedIt;
+
         TArray<FIntVector> Queue;
         TSet<FIntVector> Queued;
         TArray<FIntVector> Group;
