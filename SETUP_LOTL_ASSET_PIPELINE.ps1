@@ -13,6 +13,8 @@ $PsaFactoryCpp = Join-Path $PrivateRoot "PSAFactory.cpp"
 $PskFactoryCpp = Join-Path $PrivateRoot "PSKFactory.cpp"
 $BpflCpp = Join-Path $PrivateRoot "BPFL.cpp"
 $Marker = Join-Path $ProjectRoot "Saved\LOTL_ACTORX_SETUP.txt"
+$PhysXSetup = Join-Path $ProjectRoot "SETUP_PHYSX5_UE58.ps1"
+$PhysXBridgeLib = Join-Path $ProjectRoot "ThirdParty\PhysX5\SDK\lib\Win64\DeadbrickPhysXBridge.lib"
 $Repository = "https://github.com/djhaled/UnrealPSKPSA.git"
 $PinnedCommit = "ec0e0a4624dd5e55fa9dcb235f6846f78bbeedb0"
 
@@ -44,6 +46,18 @@ Write-Host " DEADBRICK - Lay of the Land ActorX asset pipeline" -ForegroundColor
 Write-Host " PSK/PSKX skeletal meshes + PSA animations | UE 5.8" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
+
+# REBUILD_AND_OPEN historically checked only PhysX_64.dll. Existing machines therefore already have
+# the NVIDIA SDK but not the new isolation bridge. Ensure the bridge here as well so one normal rebuild
+# upgrades old checkouts automatically instead of silently compiling WITH_DEADBRICK_PHYSX5=0.
+if (-not (Test-Path $PhysXBridgeLib)) {
+    if (-not (Test-Path $PhysXSetup)) { throw "SETUP_PHYSX5_UE58.ps1 is missing; cannot build the PhysX isolation bridge." }
+    Write-Host "PhysX isolation bridge is missing. Building it before the ActorX plugin..." -ForegroundColor Cyan
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PhysXSetup
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $PhysXBridgeLib)) {
+        throw "PhysX isolation bridge setup failed with exit code $LASTEXITCODE."
+    }
+}
 
 if ((Test-PipelineReady) -and -not $Force) {
     Write-Host "LOTL ActorX importer is already patched for UE 5.8 and unattended import." -ForegroundColor Green
