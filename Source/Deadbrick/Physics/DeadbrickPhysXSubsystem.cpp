@@ -2,6 +2,8 @@
 
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "HAL/PlatformProcess.h"
+#include "Misc/Paths.h"
 
 #if WITH_DEADBRICK_PHYSX5
 THIRD_PARTY_INCLUDES_START
@@ -23,6 +25,66 @@ namespace
         DBPXScene* Scene = nullptr;
         TMap<int64, FDeadbrickPhysXBinding> Bodies;
     };
+
+    /**
+     * PhysX is linked with delay-loaded DLL imports. RuntimeDependencies are enough for staging a
+     * packaged target, but PIE runs inside UnrealEditor.exe and must not rely on the Windows DLL
+     * search path finding project-local ThirdParty binaries by filename.
+     *
+     * Load the exact pinned SDK DLLs by absolute path before the first bridge call. The handles are
+     * intentionally kept for the lifetime of the editor process so no PIE world can unload PhysX
+     * while another DEADBRICK world/subsystem still references it.
+     */
+    static bool EnsureDeadbrickPhysXRuntimeLoaded()
+    {
+        static bool bAttempted = false;
+        static bool bLoaded = false;
+        static TArray<void*> RuntimeHandles;
+
+        if (bAttempted)
+            return bLoaded;
+
+        bAttempted = true;
+
+        const FString RuntimeDir = FPaths::ConvertRelativePathToFull(
+            FPaths::Combine(FPaths::ProjectDir(), TEXT("ThirdParty/PhysX5/SDK/bin/Win64")));
+
+        // Load dependency order explicitly. PhysXCommon depends on Foundation and PhysX depends on
+        // both, so this avoids a secondary ERROR_MOD_NOT_FOUND even when PhysX_64.dll itself exists.
+        const TCHAR* RuntimeDlls[] =
+        {
+            TEXT("PhysXFoundation_64.dll"),
+            TEXT("PhysXCommon_64.dll"),
+            TEXT("PhysX_64.dll")
+        };
+
+        for (const TCHAR* DllName : RuntimeDlls)
+        {
+            const FString DllPath = FPaths::Combine(RuntimeDir, DllName);
+            if (!FPaths::FileExists(DllPath))
+            {
+                UE_LOG(LogTemp, Error,
+                    TEXT("DEADBRICK PhysX5 runtime missing: %s. Run REBUILD_AND_OPEN_UE58.bat."),
+                    *DllPath);
+                return false;
+            }
+
+            void* Handle = FPlatformProcess::GetDllHandle(*DllPath);
+            if (!Handle)
+            {
+                UE_LOG(LogTemp, Error,
+                    TEXT("DEADBRICK PhysX5 could not load runtime DLL: %s. PIE PhysX initialization aborted safely."),
+                    *DllPath);
+                return false;
+            }
+
+            RuntimeHandles.Add(Handle);
+            UE_LOG(LogTemp, Display, TEXT("DEADBRICK PhysX5 runtime loaded: %s"), *DllPath);
+        }
+
+        bLoaded = RuntimeHandles.Num() == UE_ARRAY_COUNT(RuntimeDlls);
+        return bLoaded;
+    }
 #endif
 }
 
@@ -36,6 +98,14 @@ void UDeadbrickPhysXSubsystem::Initialize(FSubsystemCollectionBase& Collection)
     Super::Initialize(Collection);
 
 #if WITH_DEADBRICK_PHYSX5
+    if (!EnsureDeadbrickPhysXRuntimeLoaded())
+    {
+        bPhysXReady = false;
+        UE_LOG(LogTemp, Error,
+            TEXT("DEADBRICK PHYSX 5.8 NOT STARTED | native runtime DLL loading failed; bridge was not called."));
+        return;
+    }
+
     FDeadbrickPhysXState* State = new FDeadbrickPhysXState();
     PhysXState = State;
 
