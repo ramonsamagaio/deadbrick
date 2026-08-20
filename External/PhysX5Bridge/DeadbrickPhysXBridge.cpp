@@ -136,11 +136,6 @@ extern "C" DBPXScene* DBPX_CreateScene(float GroundHeightCm)
         return nullptr;
     }
 
-    // Match NVIDIA's own PhysX 5.8 HelloWorld path: the default CPU dispatcher and
-    // default simulation filter shader are used directly without initializing the
-    // full Extensions registry. Calling PxInitExtensions here unnecessarily drags
-    // RepX serializers, PVD and Cooking symbols into the Unreal link even though
-    // DEADBRICK does not use those systems for voxel rigid bodies.
     PxSceneDesc SceneDesc(State->Physics->getTolerancesScale());
     SceneDesc.gravity = PxVec3(0.0f, 0.0f, -980.665f);
     SceneDesc.solverType = PxSolverType::eTGS;
@@ -283,5 +278,19 @@ extern "C" int32_t DBPX_GetBodyTransform(DBPXScene* Scene, int64_t Handle, DBPXT
         return 0;
 
     FromPxTransform(It->second->getGlobalPose(), *OutTransform);
+    return 1;
+}
+
+extern "C" int32_t DBPX_AddImpulse(DBPXScene* Scene, int64_t Handle, float X, float Y, float Z)
+{
+    if (!Scene || Handle < 0)
+        return 0;
+
+    const auto It = Scene->Bodies.find(Handle);
+    if (It == Scene->Bodies.end() || !It->second)
+        return 0;
+
+    It->second->addForce(ToPxVector(X, Y, Z), PxForceMode::eIMPULSE, true);
+    It->second->wakeUp();
     return 1;
 }
