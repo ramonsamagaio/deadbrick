@@ -22,7 +22,7 @@ void UDeadbrickRuntimeBootstrapSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
     Super::OnWorldBeginPlay(InWorld);
 
-    ShowStatus(TEXT("DEADBRICK: building procedural destructible urban test district..."), FColor::Yellow);
+    ShowStatus(TEXT("DEADBRICK: building expanded destructible urban district..."), FColor::Yellow);
 
     if (UDeadbrickPhysXSubsystem* PhysX = InWorld.GetSubsystem<UDeadbrickPhysXSubsystem>())
     {
@@ -35,7 +35,7 @@ void UDeadbrickRuntimeBootstrapSubsystem::OnWorldBeginPlay(UWorld& InWorld)
     if (DeadbrickReferenceAssets::HasCookedReferenceAssets())
         ShowStatus(TEXT("LOTL reference content detected: skins, animations, props and materials are being auto-bound."), FColor::Cyan);
     else
-        ShowStatus(TEXT("LOTL reference assets are not editor-valid yet: rebuild will export/import GLTF + PSK + PSA automatically when the local pak is available."), FColor::Orange);
+        ShowStatus(TEXT("LOTL reference assets are not editor-valid yet: gameplay uses structured fallbacks while the import pipeline remains available."), FColor::Orange);
 
     BuildPrototypeWorld();
 
@@ -66,6 +66,11 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
     VoxelWorld->ChunkSize = 32;
     VoxelWorld->bEnableStructuralGravity = true;
     VoxelWorld->bSpawnSalvageDrops = true;
+    VoxelWorld->MaxPhysicsIslandVoxels = 24;
+    VoxelWorld->MaxPhysicsBodiesPerCollapse = 192;
+    VoxelWorld->PhysicsIslandBuildBudgetPerFrame = 4;
+    VoxelWorld->StructuralWorkBudgetPerFrame = 6144;
+    VoxelWorld->SupportCapacityPerGroundVoxel = 320.0f;
 
     AProceduralCityGenerator* CityGenerator = World->SpawnActor<AProceduralCityGenerator>(
         AProceduralCityGenerator::StaticClass(), PrototypeOrigin, FRotator::ZeroRotator, SpawnParams);
@@ -79,11 +84,16 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
     RuntimeCityGenerator = CityGenerator;
     CityGenerator->VoxelWorld = VoxelWorld;
     CityGenerator->Seed = 1337;
-    CityGenerator->BlocksPerAxis = 1;
-    CityGenerator->BlockSizeMeters = 24.0f;
-    CityGenerator->StreetWidthMeters = 8.0f;
-    CityGenerator->FloorHeightMeters = 3.0f;
+
+    // Four full blocks instead of the previous single 24 m test lot. This is deliberately still a
+    // bounded vertical slice while the naive chunk mesher is being replaced, but it is large enough to
+    // test streets, mixed building heights, scavenging and zombie movement as an actual neighborhood.
+    CityGenerator->BlocksPerAxis = 2;
+    CityGenerator->BlockSizeMeters = 32.0f;
+    CityGenerator->StreetWidthMeters = 10.0f;
+    CityGenerator->FloorHeightMeters = 3.2f;
     CityGenerator->GenerateCity();
+    CityGenerator->ImproveTraversalAndStreetLife();
 
     // Keep a guaranteed empty spawn column above the first road intersection. The road cell at Z=0
     // remains intact, while any accidental generated geometry around the capsule/camera is removed.
@@ -99,13 +109,11 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
     // become save deltas, so saves stay tiny even when the city eventually spans many streamed districts.
     VoxelWorld->StartRuntimePersistence();
 
-    // The prototype's road/soil layer occupies voxel Z=0. PhysX uses the same centimetre scale and gets
-    // a static slab whose top surface matches that layer, so detached macro bodies do not fall forever.
     if (UDeadbrickPhysXSubsystem* PhysX = World->GetSubsystem<UDeadbrickPhysXSubsystem>())
         PhysX->SetGroundHeight(PrototypeOrigin.Z + VoxelWorld->VoxelSizeCm);
 
     SpawnPrototypeZombies();
-    ShowStatus(TEXT("Urban voxel district ready: roads, soil, floors, walls, rooms and stairs are destructible cells."), FColor::Green);
+    ShowStatus(TEXT("Expanded voxel district ready: wider stairs, physical loot containers, mixed buildings and destructible interiors are active."), FColor::Green);
 }
 
 void UDeadbrickRuntimeBootstrapSubsystem::EnsurePlayer()
@@ -160,8 +168,6 @@ void UDeadbrickRuntimeBootstrapSubsystem::EnsurePlayer()
     const FRotator SpawnRotation(0.0f, 45.0f, 0.0f);
     FVector SpawnLocation = PrototypeOrigin + FVector(400.0f, 400.0f, 220.0f);
 
-    // Resolve the actual road surface instead of assuming a fixed Z. This prevents spawning inside a
-    // procedural surface and also makes the same bootstrap work after terrain/city generation changes.
     FHitResult GroundHit;
     FCollisionQueryParams GroundParams(SCENE_QUERY_STAT(DeadbrickSpawnGround), false, DeadbrickPawn);
     const FVector TraceStart = PrototypeOrigin + FVector(400.0f, 400.0f, 2000.0f);
@@ -177,8 +183,6 @@ void UDeadbrickRuntimeBootstrapSubsystem::EnsurePlayer()
         ETeleportType::TeleportPhysics);
     DeadbrickPawn->SetSafeSpawnTransform(SpawnLocation, SpawnRotation);
 
-    // The FPS camera uses pawn control rotation. Setting only the actor rotation can leave the camera
-    // inheriting an arbitrary spectator/editor pitch, which can result in an apparently black viewport.
     PC->SetControlRotation(SpawnRotation);
     if (DeadbrickPawn->FirstPersonCamera)
         DeadbrickPawn->FirstPersonCamera->Activate(true);
@@ -193,7 +197,7 @@ void UDeadbrickRuntimeBootstrapSubsystem::EnsurePlayer()
         *SpawnLocation.ToCompactString(),
         *SpawnRotation.ToCompactString());
 
-    ShowStatus(TEXT("FPS camera locked | WASD move | Shift sprint | Space jump | LMB shoot | R reload | E interact | C craft | F5 save | F9 load"), FColor::Green);
+    ShowStatus(TEXT("WASD move | Shift sprint | Space jump | LMB infinite fire | E loot/gather | C craft | F5 save | F9 load"), FColor::Green);
 }
 
 void UDeadbrickRuntimeBootstrapSubsystem::SpawnPrototypeZombies()
@@ -209,7 +213,11 @@ void UDeadbrickRuntimeBootstrapSubsystem::SpawnPrototypeZombies()
         FVector(500.0f, 1450.0f, 180.0f),
         FVector(1450.0f, 500.0f, 180.0f),
         FVector(2600.0f, 450.0f, 180.0f),
-        FVector(450.0f, 2600.0f, 180.0f)
+        FVector(450.0f, 2600.0f, 180.0f),
+        FVector(3600.0f, 1600.0f, 180.0f),
+        FVector(1700.0f, 3600.0f, 180.0f),
+        FVector(4800.0f, 900.0f, 180.0f),
+        FVector(900.0f, 4800.0f, 180.0f)
     };
 
     for (const FVector& Offset : SpawnOffsets)
