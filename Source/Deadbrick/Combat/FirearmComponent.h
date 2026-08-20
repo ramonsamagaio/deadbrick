@@ -29,6 +29,7 @@ class DEADBRICK_API UFirearmComponent : public UActorComponent
 
 public:
     UFirearmComponent();
+    virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Firearm") FDeadbrickFirearmStats Stats;
 
@@ -54,11 +55,15 @@ private:
     UPROPERTY(Transient) TObjectPtr<UStaticMeshComponent> WeaponSight;
     UPROPERTY(Transient) TObjectPtr<UPointLightComponent> MuzzleFlashLight;
 
-    FTimerHandle FirePresentationTimer;
     FVector BaseViewModelLocation = FVector::ZeroVector;
+    FRotator BaseViewModelRotation = FRotator::ZeroRotator;
+    FVector RecoilLocation = FVector::ZeroVector;
+    FRotator RecoilRotation = FRotator::ZeroRotator;
+    float WalkBobTime = 0.0f;
+    float MuzzleFlashAlpha = 0.0f;
     bool bPresentationBuilt = false;
 
     void BuildFallbackWeaponPresentation();
     void PlayFirePresentation();
-    void ResetFirePresentation();
+    void UpdateWeaponPresentation(float DeltaTime);
 };
