@@ -10,15 +10,22 @@
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
 #include "Reference/ReferenceAssetResolver.h"
 #include "UObject/ConstructorHelpers.h"
 
 AZombieCharacter::AZombieCharacter()
 {
     PrimaryActorTick.bCanEverTick = true;
-    GetCharacterMovement()->MaxWalkSpeed = 230.0f;
-    GetCharacterMovement()->MaxAcceleration = 900.0f;
-    GetCharacterMovement()->BrakingDecelerationWalking = 1200.0f;
+
+    UCharacterMovementComponent* Movement = GetCharacterMovement();
+    Movement->MaxWalkSpeed = 205.0f;
+    Movement->MaxAcceleration = 720.0f;
+    Movement->BrakingDecelerationWalking = 780.0f;
+    Movement->bOrientRotationToMovement = true;
+    Movement->RotationRate = FRotator(0.0f, 115.0f, 0.0f);
+    bUseControllerRotationYaw = false;
 
     AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
     AIControllerClass = AAIController::StaticClass();
@@ -31,22 +38,23 @@ AZombieCharacter::AZombieCharacter()
         Part->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         Part->SetRelativeLocation(Location);
         Part->SetRelativeScale3D(Scale);
+        Part->SetCastShadow(true);
         if (CubeMesh.Succeeded()) Part->SetStaticMesh(CubeMesh.Object);
     };
 
     PlaceholderBody = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderBody"));
-    ConfigurePart(PlaceholderBody, FVector(0.0f, 0.0f, 12.0f), FVector(0.34f, 0.25f, 0.48f));
+    ConfigurePart(PlaceholderBody, FVector(0.0f, 0.0f, 13.0f), FVector(0.34f, 0.25f, 0.48f));
 
     PlaceholderHead = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderHead"));
-    ConfigurePart(PlaceholderHead, FVector(0.0f, 0.0f, 69.0f), FVector(0.25f, 0.24f, 0.27f));
+    ConfigurePart(PlaceholderHead, FVector(1.0f, 0.0f, 68.0f), FVector(0.25f, 0.24f, 0.27f));
 
     PlaceholderLeftArm = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderLeftArm"));
-    ConfigurePart(PlaceholderLeftArm, FVector(4.0f, -32.0f, 22.0f), FVector(0.12f, 0.10f, 0.42f));
-    PlaceholderLeftArm->SetRelativeRotation(FRotator(-54.0f, 0.0f, -7.0f));
+    ConfigurePart(PlaceholderLeftArm, FVector(6.0f, -31.0f, 23.0f), FVector(0.115f, 0.10f, 0.43f));
+    PlaceholderLeftArm->SetRelativeRotation(FRotator(-52.0f, 0.0f, -8.0f));
 
     PlaceholderRightArm = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderRightArm"));
-    ConfigurePart(PlaceholderRightArm, FVector(4.0f, 32.0f, 22.0f), FVector(0.12f, 0.10f, 0.42f));
-    PlaceholderRightArm->SetRelativeRotation(FRotator(-58.0f, 0.0f, 7.0f));
+    ConfigurePart(PlaceholderRightArm, FVector(6.0f, 31.0f, 23.0f), FVector(0.115f, 0.10f, 0.43f));
+    PlaceholderRightArm->SetRelativeRotation(FRotator(-58.0f, 0.0f, 8.0f));
 
     PlaceholderLeftLeg = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderLeftLeg"));
     ConfigurePart(PlaceholderLeftLeg, FVector(0.0f, -13.0f, -46.0f), FVector(0.14f, 0.13f, 0.45f));
@@ -59,6 +67,16 @@ void AZombieCharacter::BeginPlay()
 {
     Super::BeginPlay();
     Health = MaxHealth;
+
+    FRandomStream VariantStream((int32)(GetUniqueID() ^ 0x71B01D));
+    GaitFrequency = VariantStream.FRandRange(4.4f, 6.8f);
+    GaitStride = VariantStream.FRandRange(0.72f, 1.22f);
+    GaitPhaseOffset = VariantStream.FRandRange(-PI, PI);
+    LimpBias = VariantStream.FRandRange(-1.0f, 1.0f);
+    ShoulderBias = VariantStream.FRandRange(-7.0f, 7.0f);
+    GetCharacterMovement()->MaxWalkSpeed = VariantStream.FRandRange(165.0f, 235.0f);
+
+    ApplyFallbackZombieMaterials();
     TryApplyReferenceVisuals();
 }
 
@@ -94,7 +112,12 @@ void AZombieCharacter::AcquireTarget()
 void AZombieCharacter::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
-    if (bDead) return;
+
+    if (bDead)
+    {
+        if (bUsingFallbackZombie) UpdateFallbackDeath(DeltaSeconds);
+        return;
+    }
 
     RetargetTimer -= DeltaSeconds;
     AttackTimer -= DeltaSeconds;
@@ -122,9 +145,8 @@ void AZombieCharacter::Tick(float DeltaSeconds)
             {
                 AttackTimer = AttackCooldown;
                 if (AttackAnimation)
-                {
                     PlayReferenceAnimation(AttackAnimation, false, FMath::Min(0.8f, AttackCooldown * 0.75f));
-                }
+
                 UGameplayStatics::ApplyDamage(CurrentTarget.Get(), AttackDamage, GetController(), this, nullptr);
             }
         }
@@ -144,12 +166,19 @@ void AZombieCharacter::Tick(float DeltaSeconds)
         UpdateReferenceAnimation();
 }
 
-float AZombieCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
+float AZombieCharacter::TakeDamage(
+    float DamageAmount,
+    FDamageEvent const& DamageEvent,
+    AController* EventInstigator,
+    AActor* DamageCauser)
 {
     if (bDead) return 0.0f;
 
     const float Applied = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
     Health -= Applied;
+    if (Applied > 0.0f && bUsingFallbackZombie)
+        FallbackHitReact = 1.0f;
+
     if (Health <= 0.0f)
     {
         bDead = true;
@@ -166,9 +195,8 @@ float AZombieCharacter::TakeDamage(float DamageAmount, FDamageEvent const& Damag
         }
         else
         {
-            // Even the asset-free fallback now has a readable death instead of simply vanishing.
-            SetActorRotation(GetActorRotation() + FRotator(0.0f, 0.0f, 82.0f));
-            SetLifeSpan(2.2f);
+            FallbackDeathTime = 0.0f;
+            SetLifeSpan(3.2f);
         }
     }
     return Applied;
@@ -184,44 +212,181 @@ void AZombieCharacter::SetFallbackVisible(bool bVisible)
     if (PlaceholderRightLeg) PlaceholderRightLeg->SetVisibility(bVisible, true);
 }
 
+void AZombieCharacter::ApplyFallbackZombieMaterials()
+{
+    UMaterialInterface* BaseMaterial = LoadObject<UMaterialInterface>(
+        nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+    if (!BaseMaterial) return;
+
+    FRandomStream Stream((int32)(GetUniqueID() ^ 0x0BADC0DE));
+
+    auto MakeMaterial = [&](const TCHAR* Name, const FLinearColor& Color, float Roughness)
+    {
+        UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(BaseMaterial, this, Name);
+        if (Material)
+        {
+            Material->SetVectorParameterValue(TEXT("Color"), Color);
+            Material->SetScalarParameterValue(TEXT("Roughness"), Roughness);
+        }
+        return Material;
+    };
+
+    const float SkinVariation = Stream.FRandRange(-0.025f, 0.025f);
+    UMaterialInstanceDynamic* Skin = MakeMaterial(
+        TEXT("ZombieSkin"),
+        FLinearColor(
+            0.19f + SkinVariation,
+            0.255f + SkinVariation * 0.4f,
+            0.17f + SkinVariation * 0.2f),
+        0.88f);
+
+    const FLinearColor ShirtPalette[] =
+    {
+        FLinearColor(0.10f, 0.12f, 0.105f),
+        FLinearColor(0.16f, 0.115f, 0.075f),
+        FLinearColor(0.075f, 0.10f, 0.13f),
+        FLinearColor(0.15f, 0.15f, 0.12f)
+    };
+    UMaterialInstanceDynamic* Shirt = MakeMaterial(
+        TEXT("ZombieShirt"),
+        ShirtPalette[Stream.RandRange(0, UE_ARRAY_COUNT(ShirtPalette) - 1)],
+        0.94f);
+
+    UMaterialInstanceDynamic* Pants = MakeMaterial(
+        TEXT("ZombiePants"),
+        FLinearColor(0.055f, 0.06f, 0.057f),
+        0.90f);
+
+    if (PlaceholderHead && Skin) PlaceholderHead->SetMaterial(0, Skin);
+    if (PlaceholderLeftArm && Skin) PlaceholderLeftArm->SetMaterial(0, Skin);
+    if (PlaceholderRightArm && Skin) PlaceholderRightArm->SetMaterial(0, Skin);
+    if (PlaceholderBody && Shirt) PlaceholderBody->SetMaterial(0, Shirt);
+    if (PlaceholderLeftLeg && Pants) PlaceholderLeftLeg->SetMaterial(0, Pants);
+    if (PlaceholderRightLeg && Pants) PlaceholderRightLeg->SetMaterial(0, Pants);
+}
+
 void AZombieCharacter::UpdateFallbackAnimation(float DeltaSeconds)
 {
     FallbackAnimTime += DeltaSeconds;
+    FallbackHitReact = FMath::FInterpTo(FallbackHitReact, 0.0f, DeltaSeconds, 7.5f);
 
     const float Speed = GetVelocity().Size2D();
     const float MoveAlpha = FMath::Clamp(Speed / FMath::Max(1.0f, GetCharacterMovement()->MaxWalkSpeed), 0.0f, 1.0f);
-    const float Phase = FMath::Sin(FallbackAnimTime * 7.0f);
+    const float Phase = FMath::Sin(FallbackAnimTime * GaitFrequency + GaitPhaseOffset);
     const float CounterPhase = -Phase;
-    const bool bAttacking = CurrentTarget.IsValid() && AttackTimer > AttackCooldown - 0.30f;
+    const float Secondary = FMath::Sin(FallbackAnimTime * GaitFrequency * 0.53f + GaitPhaseOffset * 0.7f);
+    const float StepCompression = FMath::Abs(Phase);
+    const bool bAttackWindow = CurrentTarget.IsValid() && AttackTimer > AttackCooldown - 0.34f;
+    AttackPoseAlpha = FMath::FInterpTo(AttackPoseAlpha, bAttackWindow ? 1.0f : 0.0f, DeltaSeconds, bAttackWindow ? 14.0f : 5.5f);
+
+    const float LimpLeft = FMath::Max(0.0f, LimpBias);
+    const float LimpRight = FMath::Max(0.0f, -LimpBias);
+    const float HitKick = FallbackHitReact * 12.0f;
 
     if (PlaceholderBody)
     {
-        PlaceholderBody->SetRelativeRotation(FRotator(-7.0f + Phase * 2.0f * MoveAlpha, 0.0f, Phase * 2.0f * MoveAlpha));
-        PlaceholderBody->SetRelativeLocation(FVector(0.0f, 0.0f, 12.0f + FMath::Abs(Phase) * 2.5f * MoveAlpha));
+        const float ForwardLean = -10.0f - MoveAlpha * 5.0f - AttackPoseAlpha * 8.0f + HitKick;
+        PlaceholderBody->SetRelativeRotation(FRotator(
+            ForwardLean + Phase * 1.8f * MoveAlpha,
+            Secondary * 2.5f,
+            Phase * (2.5f + FMath::Abs(LimpBias) * 4.5f) * MoveAlpha));
+        PlaceholderBody->SetRelativeLocation(FVector(
+            AttackPoseAlpha * 4.0f,
+            LimpBias * StepCompression * 2.0f * MoveAlpha,
+            13.0f + StepCompression * 2.2f * MoveAlpha - FallbackHitReact * 1.5f));
     }
 
     if (PlaceholderHead)
-        PlaceholderHead->SetRelativeRotation(FRotator(-10.0f + Phase * 3.0f, Phase * 6.0f, CounterPhase * 3.0f));
+    {
+        PlaceholderHead->SetRelativeRotation(FRotator(
+            -13.0f + Secondary * 4.0f - FallbackHitReact * 10.0f,
+            Phase * 7.0f + ShoulderBias * 0.35f,
+            CounterPhase * 3.0f + LimpBias * 4.0f));
+        PlaceholderHead->SetRelativeLocation(FVector(
+            1.0f + AttackPoseAlpha * 3.0f,
+            Secondary * 1.5f,
+            68.0f + StepCompression * 1.4f * MoveAlpha));
+    }
 
-    const float ArmBase = bAttacking ? -92.0f : -56.0f;
-    const float ArmSwing = bAttacking ? 12.0f : 18.0f * MoveAlpha;
-    if (PlaceholderLeftArm) PlaceholderLeftArm->SetRelativeRotation(FRotator(ArmBase + Phase * ArmSwing, 0.0f, -9.0f));
-    if (PlaceholderRightArm) PlaceholderRightArm->SetRelativeRotation(FRotator(ArmBase + CounterPhase * ArmSwing, 0.0f, 9.0f));
+    const float LeftArmBase = FMath::Lerp(-54.0f, -92.0f, AttackPoseAlpha);
+    const float RightArmBase = FMath::Lerp(-60.0f, -96.0f, AttackPoseAlpha);
+    const float ArmSwing = (16.0f + GaitStride * 7.0f) * MoveAlpha * (1.0f - AttackPoseAlpha * 0.72f);
 
-    if (PlaceholderLeftLeg) PlaceholderLeftLeg->SetRelativeRotation(FRotator(Phase * 24.0f * MoveAlpha, 0.0f, 0.0f));
-    if (PlaceholderRightLeg) PlaceholderRightLeg->SetRelativeRotation(FRotator(CounterPhase * 24.0f * MoveAlpha, 0.0f, 0.0f));
+    if (PlaceholderLeftArm)
+    {
+        PlaceholderLeftArm->SetRelativeRotation(FRotator(
+            LeftArmBase + Phase * ArmSwing * (1.0f - LimpLeft * 0.35f) + HitKick * 0.45f,
+            ShoulderBias * 0.25f,
+            -10.0f - LimpBias * 6.0f));
+        PlaceholderLeftArm->SetRelativeLocation(FVector(6.0f + AttackPoseAlpha * 8.0f, -31.0f, 23.0f - LimpLeft * 4.0f));
+    }
+
+    if (PlaceholderRightArm)
+    {
+        PlaceholderRightArm->SetRelativeRotation(FRotator(
+            RightArmBase + CounterPhase * ArmSwing * (1.0f - LimpRight * 0.35f) + HitKick * 0.30f,
+            -ShoulderBias * 0.25f,
+            10.0f - LimpBias * 6.0f));
+        PlaceholderRightArm->SetRelativeLocation(FVector(6.0f + AttackPoseAlpha * 8.0f, 31.0f, 23.0f - LimpRight * 4.0f));
+    }
+
+    const float LegSwing = 23.0f * GaitStride * MoveAlpha;
+    if (PlaceholderLeftLeg)
+    {
+        PlaceholderLeftLeg->SetRelativeRotation(FRotator(
+            Phase * LegSwing * (1.0f - LimpLeft * 0.55f),
+            0.0f,
+            -LimpLeft * 6.0f));
+        PlaceholderLeftLeg->SetRelativeLocation(FVector(
+            FMath::Max(0.0f, Phase) * 4.0f * MoveAlpha,
+            -13.0f,
+            -46.0f + LimpLeft * StepCompression * 3.0f));
+    }
+
+    if (PlaceholderRightLeg)
+    {
+        PlaceholderRightLeg->SetRelativeRotation(FRotator(
+            CounterPhase * LegSwing * (1.0f - LimpRight * 0.55f),
+            0.0f,
+            LimpRight * 6.0f));
+        PlaceholderRightLeg->SetRelativeLocation(FVector(
+            FMath::Max(0.0f, CounterPhase) * 4.0f * MoveAlpha,
+            13.0f,
+            -46.0f + LimpRight * StepCompression * 3.0f));
+    }
+}
+
+void AZombieCharacter::UpdateFallbackDeath(float DeltaSeconds)
+{
+    FallbackDeathTime += DeltaSeconds;
+    const float Alpha = FMath::Clamp(FallbackDeathTime / 0.78f, 0.0f, 1.0f);
+    const float Ease = Alpha * Alpha * (3.0f - 2.0f * Alpha);
+    const float Side = LimpBias >= 0.0f ? 1.0f : -1.0f;
+
+    const FRotator Current = GetActorRotation();
+    SetActorRotation(FRotator(
+        FMath::Lerp(0.0f, -72.0f, Ease),
+        Current.Yaw,
+        FMath::Lerp(0.0f, Side * 34.0f, Ease)));
+
+    if (PlaceholderLeftArm)
+        PlaceholderLeftArm->SetRelativeRotation(FRotator(-30.0f + Ease * 48.0f, 0.0f, -28.0f * Side));
+    if (PlaceholderRightArm)
+        PlaceholderRightArm->SetRelativeRotation(FRotator(-42.0f + Ease * 35.0f, 0.0f, 24.0f * Side));
+    if (PlaceholderHead)
+        PlaceholderHead->SetRelativeRotation(FRotator(-18.0f - Ease * 22.0f, Side * 14.0f, Side * 18.0f));
 }
 
 void AZombieCharacter::TryApplyReferenceVisuals()
 {
     TArray<USkeletalMesh*> ReferenceMeshes = DeadbrickReferenceAssets::FindSkeletalMeshes(
-        {TEXT("enemy"), TEXT("skeleton"), TEXT("goblin"), TEXT("creature"), TEXT("character")}, 12);
+        {TEXT("enemy"), TEXT("zombie"), TEXT("infected"), TEXT("undead"), TEXT("human"), TEXT("creature"), TEXT("character")}, 16);
 
     if (ReferenceMeshes.Num() == 0 || !GetMesh())
     {
         bUsingFallbackZombie = true;
         SetFallbackVisible(true);
-        UE_LOG(LogTemp, Display, TEXT("DEADBRICK zombie: no cooked reference enemy mesh found; articulated zombie fallback active."));
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK zombie: no editor-valid skeletal reference found; varied articulated zombie fallback active."));
         return;
     }
 
@@ -235,8 +400,8 @@ void AZombieCharacter::TryApplyReferenceVisuals()
 
     USkeleton* Skeleton = ReferenceMesh->GetSkeleton();
     IdleAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(Skeleton, {TEXT("idle"), TEXT("stand"), TEXT("breath")});
-    WalkAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(Skeleton, {TEXT("walk"), TEXT("run"), TEXT("move"), TEXT("locomotion")});
-    AttackAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(Skeleton, {TEXT("attack"), TEXT("bite"), TEXT("hit"), TEXT("melee")});
+    WalkAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(Skeleton, {TEXT("walk"), TEXT("shamble"), TEXT("run"), TEXT("move"), TEXT("locomotion")});
+    AttackAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(Skeleton, {TEXT("attack"), TEXT("bite"), TEXT("grab"), TEXT("hit"), TEXT("melee")});
     DeathAnimation = DeadbrickReferenceAssets::FindAnimationForSkeleton(Skeleton, {TEXT("death"), TEXT("die"), TEXT("dead")});
 
     UE_LOG(LogTemp, Display, TEXT("DEADBRICK zombie reference visual bound: %s"), *ReferenceMesh->GetPathName());
