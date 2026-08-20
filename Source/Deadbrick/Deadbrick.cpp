@@ -7,7 +7,7 @@ public:
     virtual void StartupModule() override
     {
         FDefaultGameModuleImpl::StartupModule();
-        UE_LOG(LogTemp, Display, TEXT("DEADBRICK MODULE BUILD 2026-08-20-T ATMOSPHERE-FOG-DRESSING-ZOMBIE-GAIT-WEAPON-MOTION LOADED"));
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK MODULE BUILD 2026-08-20-U LIGHTING-WHITEOUT-FIX-DESTRUCTION-PACING LOADED"));
     }
 };
 
