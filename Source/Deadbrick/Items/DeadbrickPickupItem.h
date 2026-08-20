@@ -39,5 +39,14 @@ private:
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<UStaticMeshComponent> MeshComponent;
 
+    UPROPERTY(VisibleAnywhere)
+    TObjectPtr<UStaticMeshComponent> DetailMeshComponent;
+
+    UPROPERTY(VisibleAnywhere)
+    TObjectPtr<UStaticMeshComponent> AccentMeshComponent;
+
+    bool bUsingReferenceVisual = false;
+
     void ApplyVisualForItemType();
+    void ConfigureFallbackVisual(float DesiredSizeCm);
 };
