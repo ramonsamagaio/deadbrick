@@ -175,9 +175,6 @@ void AVoxelPhysicsIsland::InitializeFromVoxels(ADestructibleVoxelWorld* SourceWo
             if (!CellSet.Contains(Cell + Directions[Face])) AddFace(Buffer, Center, Face);
         }
 
-        // A few small convex query proxies follow the actual rubble footprint much better than the
-        // old single huge bounding box. PhysX still owns rigid-body simulation; these are for player,
-        // bullet and interaction sweeps inside Unreal.
         const FIntVector BucketKey(
             FloorDivSmall(Cell.X, 4),
             FloorDivSmall(Cell.Y, 4),
@@ -299,6 +296,11 @@ void AVoxelPhysicsIsland::ActivatePhysics()
     MeshComponent->SetMassOverrideInKg(NAME_None, PreparedMassKg, true);
     MeshComponent->WakeAllRigidBodies();
     UE_LOG(LogTemp, Warning, TEXT("DEADBRICK voxel island fell back to Chaos because PhysX5 was unavailable."));
+}
+
+void AVoxelPhysicsIsland::PushFromGameplay(const FVector& Impulse)
+{
+    ApplyGameplayImpulse(Impulse);
 }
 
 void AVoxelPhysicsIsland::ApplyGameplayImpulse(const FVector& Impulse)
