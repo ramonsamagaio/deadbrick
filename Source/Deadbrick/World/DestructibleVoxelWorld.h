@@ -30,30 +30,32 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="4096", ClampMax="524288"))
     int32 MaxStructuralScanVoxels = 262144;
 
-    // Preferred amount of source voxel material represented by one falling rubble piece. Large
-    // structures may raise the effective target just enough to respect the body safety ceiling.
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="8", ClampMax="512"))
-    int32 MaxPhysicsIslandVoxels = 48;
+    // Target amount of source voxel material represented by one falling rubble body. Keeping this
+    // small is what makes a collapse read as rubble instead of one giant unplayable block.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="8", ClampMax="128"))
+    int32 MaxPhysicsIslandVoxels = 24;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="4096", ClampMax="524288"))
     int32 MaxDetachedComponentVoxels = 262144;
 
-    // Simple PhysX boxes are cheap enough to carry many local rubble pieces. A higher ceiling keeps
-    // the visual result granular while preparation remains amortized over several render frames.
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="1", ClampMax="256"))
-    int32 MaxPhysicsBodiesPerCollapse = 128;
+    // Hard ceiling for active rigid bodies produced by one structural failure. If a building is larger,
+    // bodies are sampled spatially across the collapse rather than merged into giant slabs.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="1", ClampMax="384"))
+    int32 MaxPhysicsBodiesPerCollapse = 192;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="1", ClampMax="8"))
-    int32 PhysicsIslandBuildBudgetPerFrame = 3;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="1", ClampMax="12"))
+    int32 PhysicsIslandBuildBudgetPerFrame = 4;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="256", ClampMax="32768"))
-    int32 StructuralWorkBudgetPerFrame = 4096;
+    int32 StructuralWorkBudgetPerFrame = 6144;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="1", ClampMax="16"))
     int32 ChunkRebuildBudgetPerFrame = 2;
 
+    // Approximate number of structural voxels that one ground-contact voxel can support. This lets a
+    // mostly removed first floor fail even while a few columns still technically touch the ground.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics")
-    float SupportCapacityPerGroundVoxel = 384.0f;
+    float SupportCapacityPerGroundVoxel = 320.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Items")
     bool bSpawnSalvageDrops = true;
@@ -99,6 +101,7 @@ private:
         bool bComponentActive = false;
         bool bGrounded = false;
         bool bHitScanLimit = false;
+        int32 GroundSupportCount = 0;
 
         void ResetComponent()
         {
@@ -108,6 +111,7 @@ private:
             bComponentActive = false;
             bGrounded = false;
             bHitScanLimit = false;
+            GroundSupportCount = 0;
         }
     };
 
@@ -117,6 +121,8 @@ private:
         TArray<TArray<FIntVector>> Groups;
         TArray<TWeakObjectPtr<AVoxelPhysicsIsland>> PreparedIslands;
         int32 NextGroupIndex = 0;
+        int32 NextActivateIndex = 0;
+        bool bDetachedFromStatic = false;
     };
 
     TMap<FIntVector, FDeadbrickVoxelChunk> Chunks;
