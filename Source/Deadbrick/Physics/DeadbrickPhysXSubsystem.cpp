@@ -26,15 +26,6 @@ namespace
         TMap<int64, FDeadbrickPhysXBinding> Bodies;
     };
 
-    /**
-     * PhysX is linked with delay-loaded DLL imports. RuntimeDependencies are enough for staging a
-     * packaged target, but PIE runs inside UnrealEditor.exe and must not rely on the Windows DLL
-     * search path finding project-local ThirdParty binaries by filename.
-     *
-     * Load the exact pinned SDK DLLs by absolute path before the first bridge call. The handles are
-     * intentionally kept for the lifetime of the editor process so no PIE world can unload PhysX
-     * while another DEADBRICK world/subsystem still references it.
-     */
     static bool EnsureDeadbrickPhysXRuntimeLoaded()
     {
         static bool bAttempted = false;
@@ -49,8 +40,6 @@ namespace
         const FString RuntimeDir = FPaths::ConvertRelativePathToFull(
             FPaths::Combine(FPaths::ProjectDir(), TEXT("ThirdParty/PhysX5/SDK/bin/Win64")));
 
-        // Load dependency order explicitly. PhysXCommon depends on Foundation and PhysX depends on
-        // both, so this avoids a secondary ERROR_MOD_NOT_FOUND even when PhysX_64.dll itself exists.
         const TCHAR* RuntimeDlls[] =
         {
             TEXT("PhysXFoundation_64.dll"),
@@ -259,6 +248,17 @@ void UDeadbrickPhysXSubsystem::DestroyBody(int64 Handle)
 
     DBPX_DestroyBody(State->Scene, Handle);
     State->Bodies.Remove(Handle);
+#endif
+}
+
+void UDeadbrickPhysXSubsystem::AddImpulse(int64 Handle, const FVector& Impulse)
+{
+#if WITH_DEADBRICK_PHYSX5
+    FDeadbrickPhysXState* State = static_cast<FDeadbrickPhysXState*>(PhysXState);
+    if (!bPhysXReady || !State || !State->Scene || Handle == INDEX_NONE)
+        return;
+
+    DBPX_AddImpulse(State->Scene, Handle, (float)Impulse.X, (float)Impulse.Y, (float)Impulse.Z);
 #endif
 }
 
