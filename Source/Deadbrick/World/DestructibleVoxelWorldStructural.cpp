@@ -16,11 +16,6 @@ namespace
     {
         return Material == EDeadbrickVoxelMaterial::Soil || Material == EDeadbrickVoxelMaterial::Asphalt;
     }
-
-    int32 AxisValue(const FIntVector& V, int32 Axis)
-    {
-        return Axis == 0 ? V.X : (Axis == 1 ? V.Y : V.Z);
-    }
 }
 
 void ADestructibleVoxelWorld::Tick(float DeltaSeconds)
@@ -46,9 +41,6 @@ void ADestructibleVoxelWorld::QueueStructuralCheckFromDestroyed(const TArray<FIn
 {
     if (!bEnableStructuralGravity || DestroyedCells.Num() == 0) return;
 
-    // Damage never launches a full connectivity walk inside the input event. It only contributes
-    // candidate neighbours to the next fresh structural pass. Rapid fire therefore coalesces into
-    // one follow-up query rather than starting one building-sized BFS per bullet.
     for (const FIntVector& Destroyed : DestroyedCells)
     {
         for (const FIntVector& Direction : StructuralDirections)
@@ -202,7 +194,7 @@ void ADestructibleVoxelWorld::ProcessStructuralQueries()
         if (Query.bHitScanLimit)
         {
             UE_LOG(LogTemp, Warning,
-                TEXT("DEADBRICK structural safety ceiling reached at %d voxels; component kept static. Raise MaxStructuralScanVoxels only if a real structure exceeds this."),
+                TEXT("DEADBRICK structural safety ceiling reached at %d voxels; component kept static."),
                 Query.Component.Num());
             Query.ResetComponent();
             continue;
@@ -217,7 +209,7 @@ void ADestructibleVoxelWorld::ProcessStructuralQueries()
             else if (Query.Component.Num() > MaxDetachedComponentVoxels)
             {
                 UE_LOG(LogTemp, Warning,
-                    TEXT("DEADBRICK unanchored component has %d voxels and exceeds the configured detached-component safety ceiling %d."),
+                    TEXT("DEADBRICK unanchored component has %d voxels and exceeds detached-component ceiling %d."),
                     Query.Component.Num(), MaxDetachedComponentVoxels);
             }
 
@@ -230,61 +222,86 @@ void ADestructibleVoxelWorld::QueueDetachedComponentForPhysics(const TArray<FInt
 {
     if (!GetWorld() || Component.Num() == 0) return;
 
-    // Never queue overlapping conversions. A later fresh structural pass will re-evaluate whatever
-    // remains after the current collapse has been committed to the static voxel field.
     for (const FIntVector& Cell : Component)
     {
         if (PendingCollapseCells.Contains(Cell)) return;
     }
 
-    FIntVector Min = Component[0];
-    FIntVector Max = Component[0];
-    for (const FIntVector& Cell : Component)
-    {
-        Min.X = FMath::Min(Min.X, Cell.X); Min.Y = FMath::Min(Min.Y, Cell.Y); Min.Z = FMath::Min(Min.Z, Cell.Z);
-        Max.X = FMath::Max(Max.X, Cell.X); Max.Y = FMath::Max(Max.Y, Cell.Y); Max.Z = FMath::Max(Max.Z, Cell.Z);
-    }
+    const int32 BodyCap = FMath::Max(1, MaxPhysicsBodiesPerCollapse);
+    const int32 PreferredCellsPerBody = FMath::Clamp(MaxPhysicsIslandVoxels, 8, 512);
+    const int32 MinimumNeededPerBody = FMath::CeilToInt((float)Component.Num() / (float)BodyCap);
+    const int32 EffectiveCellsPerBody = FMath::Max(PreferredCellsPerBody, MinimumNeededPerBody);
 
-    const FIntVector Extent = Max - Min;
-    int32 SplitAxis = 0;
-    if (Extent.Y > Extent.X && Extent.Y >= Extent.Z) SplitAxis = 1;
-    else if (Extent.Z > Extent.X && Extent.Z > Extent.Y) SplitAxis = 2;
-
-    const int32 TargetPerBody = FMath::Max(256, MaxPhysicsIslandVoxels);
-    int32 BodyCount = FMath::CeilToInt((float)Component.Num() / (float)TargetPerBody);
-    BodyCount = FMath::Clamp(BodyCount, 1, FMath::Max(1, MaxPhysicsBodiesPerCollapse));
-
-    const int32 MinAxis = AxisValue(Min, SplitAxis);
-    const int32 MaxAxis = AxisValue(Max, SplitAxis);
-    const int32 AxisRange = FMath::Max(1, MaxAxis - MinAxis + 1);
-    BodyCount = FMath::Min(BodyCount, AxisRange);
+    // Flood-fill partitions preserve locality. The previous longest-axis slicing could turn an entire
+    // floor or facade into one enormous rectangular rigid body, which looked like a moving building
+    // slab and made interaction feel fake. These groups stay contiguous and rubble-sized.
+    TSet<FIntVector> Unassigned;
+    Unassigned.Reserve(Component.Num());
+    for (const FIntVector& Cell : Component) Unassigned.Add(Cell);
 
     FPendingCollapseState Collapse;
     Collapse.Cells = Component;
-    Collapse.Groups.SetNum(BodyCount);
+
+    while (Unassigned.Num() > 0 && Collapse.Groups.Num() < BodyCap)
+    {
+        FIntVector Seed = FIntVector::ZeroValue;
+        bool bFoundSeed = false;
+        for (const FIntVector& Candidate : Unassigned)
+        {
+            Seed = Candidate;
+            bFoundSeed = true;
+            break;
+        }
+        if (!bFoundSeed) break;
+
+        TArray<FIntVector> Group;
+        Group.Reserve(EffectiveCellsPerBody);
+        TArray<FIntVector> Queue;
+        Queue.Reserve(EffectiveCellsPerBody * 2);
+        TSet<FIntVector> Queued;
+        Queue.Add(Seed);
+        Queued.Add(Seed);
+        int32 QueueReadIndex = 0;
+
+        while (QueueReadIndex < Queue.Num() && Group.Num() < EffectiveCellsPerBody)
+        {
+            const FIntVector Current = Queue[QueueReadIndex++];
+            if (!Unassigned.Remove(Current)) continue;
+
+            Group.Add(Current);
+            for (const FIntVector& Direction : StructuralDirections)
+            {
+                const FIntVector Neighbor = Current + Direction;
+                if (Unassigned.Contains(Neighbor) && !Queued.Contains(Neighbor))
+                {
+                    Queued.Add(Neighbor);
+                    Queue.Add(Neighbor);
+                }
+            }
+        }
+
+        if (Group.Num() > 0)
+            Collapse.Groups.Add(MoveTemp(Group));
+    }
+
+    // Connected structural components should be exhausted by the capacity calculation above. Keep a
+    // defensive merge for pathological data rather than dropping dynamic cells.
+    if (Unassigned.Num() > 0)
+    {
+        if (Collapse.Groups.Num() == 0) Collapse.Groups.AddDefaulted();
+        TArray<FIntVector>& LastGroup = Collapse.Groups.Last();
+        for (const FIntVector& Cell : Unassigned) LastGroup.Add(Cell);
+        Unassigned.Reset();
+    }
+
+    if (Collapse.Groups.Num() == 0) return;
 
     for (const FIntVector& Cell : Component)
-    {
-        const int32 Relative = AxisValue(Cell, SplitAxis) - MinAxis;
-        const int32 GroupIndex = FMath::Clamp((Relative * BodyCount) / AxisRange, 0, BodyCount - 1);
-        Collapse.Groups[GroupIndex].Add(Cell);
         PendingCollapseCells.Add(Cell);
-    }
-
-    for (int32 Index = Collapse.Groups.Num() - 1; Index >= 0; --Index)
-    {
-        if (Collapse.Groups[Index].Num() == 0) Collapse.Groups.RemoveAt(Index);
-    }
-
-    if (Collapse.Groups.Num() == 0)
-    {
-        for (const FIntVector& Cell : Component) PendingCollapseCells.Remove(Cell);
-        return;
-    }
 
     UE_LOG(LogTemp, Display,
-        TEXT("DEADBRICK COLLAPSE QUEUED: %d unanchored voxels -> %d macro physics bodies; preparation is frame-budgeted."),
-        Component.Num(), Collapse.Groups.Num());
+        TEXT("DEADBRICK COLLAPSE QUEUED: %d unanchored voxels -> %d contiguous rubble bodies, target=%d cells/body."),
+        Component.Num(), Collapse.Groups.Num(), EffectiveCellsPerBody);
 
     PendingCollapses.Add(MoveTemp(Collapse));
 }
@@ -307,8 +324,6 @@ void ADestructibleVoxelWorld::ProcessPendingCollapses()
         if (AVoxelPhysicsIsland* Island = GetWorld()->SpawnActor<AVoxelPhysicsIsland>(
             AVoxelPhysicsIsland::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams))
         {
-            // Build visual/collision data without simulation while the original static voxels still exist.
-            // Once every macro body is prepared, the static source is removed and all bodies wake together.
             Island->InitializeFromVoxels(this, Group, false);
             Collapse.PreparedIslands.Add(Island);
         }
@@ -339,7 +354,7 @@ void ADestructibleVoxelWorld::ProcessPendingCollapses()
     for (const FIntVector& Cell : Collapse.Cells) PendingCollapseCells.Remove(Cell);
 
     UE_LOG(LogTemp, Display,
-        TEXT("DEADBRICK STRUCTURAL COLLAPSE: %d voxels released as %d macro bodies."),
+        TEXT("DEADBRICK STRUCTURAL COLLAPSE: %d voxels released as %d interactive rubble bodies."),
         Collapse.Cells.Num(), ActivatedBodies);
 
     PendingCollapses.RemoveAt(0, 1, EAllowShrinking::No);
@@ -372,8 +387,6 @@ void ADestructibleVoxelWorld::DetachCellsFromStaticWorld(const TArray<FIntVector
         if (Local.Z == ChunkSize - 1) { const FIntVector N = ChunkCoord + FIntVector(0,0, 1); if (Chunks.Contains(N)) AffectedChunks.Add(N); }
     }
 
-    // Do not rebuild the entire detached structure synchronously. The normal runtime chunk budget
-    // will retire stale static geometry over the following frames while the prepared macro bodies fall.
     for (const FIntVector& ChunkCoord : AffectedChunks) DirtyChunks.Add(ChunkCoord);
 }
 
