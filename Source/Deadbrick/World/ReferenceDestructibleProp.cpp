@@ -44,6 +44,20 @@ void AReferenceDestructibleProp::InitializeFromReference(
         FMath::Max(4.0f, TargetDimensionsCm.Z));
     CollisionComponent->SetBoxExtent(SafeDimensions * 0.5f);
 
+    // Containers are independent rigid actors, not voxels glued into the building shell. If the floor
+    // disappears they simply fall with gravity, remain intact, and can still be opened afterwards.
+    if (ReferencePropRole == EDeadbrickReferencePropRole::Container)
+    {
+        CollisionComponent->SetCollisionObjectType(ECC_PhysicsBody);
+        CollisionComponent->SetSimulatePhysics(true);
+        CollisionComponent->SetEnableGravity(true);
+        CollisionComponent->SetLinearDamping(0.65f);
+        CollisionComponent->SetAngularDamping(0.85f);
+        CollisionComponent->SetMassOverrideInKg(NAME_None, 55.0f, true);
+        CollisionComponent->SetUseCCD(true, NAME_None);
+        CollisionComponent->WakeAllRigidBodies();
+    }
+
     if (!InMesh) return;
 
     MeshComponent->SetStaticMesh(InMesh);
