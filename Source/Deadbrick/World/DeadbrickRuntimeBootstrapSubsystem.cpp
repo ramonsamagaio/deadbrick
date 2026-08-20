@@ -9,6 +9,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
+#include "Physics/DeadbrickPhysXSubsystem.h"
 #include "Reference/ReferenceAssetResolver.h"
 #include "TimerManager.h"
 
@@ -22,10 +23,19 @@ void UDeadbrickRuntimeBootstrapSubsystem::OnWorldBeginPlay(UWorld& InWorld)
     Super::OnWorldBeginPlay(InWorld);
 
     ShowStatus(TEXT("DEADBRICK: building procedural destructible urban test district..."), FColor::Yellow);
+
+    if (UDeadbrickPhysXSubsystem* PhysX = InWorld.GetSubsystem<UDeadbrickPhysXSubsystem>())
+    {
+        if (PhysX->IsPhysXReady())
+            ShowStatus(TEXT("PHYSX 5.8 ACTIVE: detached voxel structures are simulated outside Chaos at fixed 60 Hz."), FColor::Green);
+        else
+            ShowStatus(TEXT("PHYSX 5.8 NOT ACTIVE: run REBUILD_AND_OPEN_UE58.bat so the pinned SDK is installed before compilation."), FColor::Red);
+    }
+
     if (DeadbrickReferenceAssets::HasCookedReferenceAssets())
         ShowStatus(TEXT("LOTL reference content detected: skins, animations, props and materials are being auto-bound."), FColor::Cyan);
     else
-        ShowStatus(TEXT("LOTL reference packages are not readable yet: run IMPORT_LOTL_REFERENCE_UE58.bat."), FColor::Orange);
+        ShowStatus(TEXT("LOTL reference assets are not editor-valid yet: rebuild will export/import GLTF + PSK + PSA automatically when the local pak is available."), FColor::Orange);
 
     BuildPrototypeWorld();
 
@@ -88,6 +98,11 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
     // Everything before this point is deterministic baseline generation. Only gameplay changes after it
     // become save deltas, so saves stay tiny even when the city eventually spans many streamed districts.
     VoxelWorld->StartRuntimePersistence();
+
+    // The prototype's road/soil layer occupies voxel Z=0. PhysX uses the same centimetre scale and gets
+    // a static slab whose top surface matches that layer, so detached macro bodies do not fall forever.
+    if (UDeadbrickPhysXSubsystem* PhysX = World->GetSubsystem<UDeadbrickPhysXSubsystem>())
+        PhysX->SetGroundHeight(PrototypeOrigin.Z + VoxelWorld->VoxelSizeCm);
 
     SpawnPrototypeZombies();
     ShowStatus(TEXT("Urban voxel district ready: roads, soil, floors, walls, rooms and stairs are destructible cells."), FColor::Green);
