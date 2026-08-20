@@ -6,12 +6,14 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "Modules/ModuleManager.h"
 
 namespace
 {
     bool bRegistryScanned = false;
+    TMap<FString, UMaterialInterface*> FallbackMaterials;
 
     bool IsReferencePath(const FString& Input)
     {
@@ -106,6 +108,74 @@ namespace
         }
         return Result;
     }
+
+    UMaterialInterface* MakeFallbackMaterial(const TArray<FString>& Keywords)
+    {
+        FString Key;
+        for (const FString& Keyword : Keywords)
+        {
+            if (!Key.IsEmpty()) Key += TEXT("_");
+            Key += Keyword.ToLower();
+        }
+        if (Key.IsEmpty()) Key = TEXT("default");
+
+        if (UMaterialInterface** Existing = FallbackMaterials.Find(Key)) return *Existing;
+
+        UMaterialInterface* Base = LoadObject<UMaterialInterface>(
+            nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+        if (!Base) return nullptr;
+
+        FLinearColor Color(0.26f, 0.27f, 0.28f);
+        float Roughness = 0.88f;
+        const FString Search = Key;
+
+        if (Search.Contains(TEXT("asphalt")) || Search.Contains(TEXT("road")))
+        {
+            Color = FLinearColor(0.035f, 0.040f, 0.043f);
+            Roughness = 0.94f;
+        }
+        else if (Search.Contains(TEXT("brick")) || Search.Contains(TEXT("masonry")))
+        {
+            Color = FLinearColor(0.34f, 0.105f, 0.065f);
+            Roughness = 0.91f;
+        }
+        else if (Search.Contains(TEXT("concrete")) || Search.Contains(TEXT("cement")))
+        {
+            Color = FLinearColor(0.26f, 0.285f, 0.29f);
+            Roughness = 0.92f;
+        }
+        else if (Search.Contains(TEXT("glass")) || Search.Contains(TEXT("window")))
+        {
+            Color = FLinearColor(0.12f, 0.23f, 0.27f);
+            Roughness = 0.24f;
+        }
+        else if (Search.Contains(TEXT("wood")) || Search.Contains(TEXT("timber")))
+        {
+            Color = FLinearColor(0.27f, 0.14f, 0.06f);
+            Roughness = 0.88f;
+        }
+        else if (Search.Contains(TEXT("metal")) || Search.Contains(TEXT("steel")) || Search.Contains(TEXT("iron")))
+        {
+            Color = FLinearColor(0.12f, 0.15f, 0.17f);
+            Roughness = 0.48f;
+        }
+        else if (Search.Contains(TEXT("soil")) || Search.Contains(TEXT("dirt")) || Search.Contains(TEXT("earth")))
+        {
+            Color = FLinearColor(0.16f, 0.095f, 0.045f);
+            Roughness = 0.97f;
+        }
+
+        UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(Base, GetTransientPackage());
+        if (!Material) return Base;
+        Material->SetVectorParameterValue(TEXT("Color"), Color);
+        Material->SetScalarParameterValue(TEXT("Roughness"), Roughness);
+
+        // Only a tiny fixed set of procedural surface fallbacks is created. Rooting them keeps the
+        // runtime-generated MIDs alive while procedural mesh sections reference them.
+        Material->AddToRoot();
+        FallbackMaterials.Add(Key, Material);
+        return Material;
+    }
 }
 
 bool DeadbrickReferenceAssets::HasCookedReferenceAssets()
@@ -184,10 +254,16 @@ UMaterialInterface* DeadbrickReferenceAssets::FindMaterial(const TArray<FString>
 {
     TArray<UMaterialInterface*> Materials = LoadRankedAssets<UMaterialInterface>(
         UMaterialInterface::StaticClass()->GetClassPathName(), PreferredKeywords, 1);
-    if (Materials.Num() == 0) return nullptr;
 
-    UMaterialInterface* Material = Materials[0];
-    if (OutObjectPath) *OutObjectPath = Material->GetPathName();
-    UE_LOG(LogTemp, Display, TEXT("DEADBRICK reference material: %s"), *Material->GetPathName());
-    return Material;
+    if (Materials.Num() > 0)
+    {
+        UMaterialInterface* Material = Materials[0];
+        if (OutObjectPath) *OutObjectPath = Material->GetPathName();
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK reference material: %s"), *Material->GetPathName());
+        return Material;
+    }
+
+    UMaterialInterface* Fallback = MakeFallbackMaterial(PreferredKeywords);
+    if (Fallback && OutObjectPath) *OutObjectPath = Fallback->GetPathName();
+    return Fallback;
 }
