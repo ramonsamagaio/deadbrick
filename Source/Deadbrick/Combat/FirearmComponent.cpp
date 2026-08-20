@@ -6,20 +6,31 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
 #include "Player/DeadbrickCharacter.h"
-#include "TimerManager.h"
 #include "World/DestructibleVoxelWorld.h"
 
 UFirearmComponent::UFirearmComponent()
 {
-    PrimaryComponentTick.bCanEverTick = false;
+    PrimaryComponentTick.bCanEverTick = true;
 }
 
 void UFirearmComponent::BeginPlay()
 {
     Super::BeginPlay();
     BuildFallbackWeaponPresentation();
+}
+
+void UFirearmComponent::TickComponent(
+    float DeltaTime,
+    ELevelTick TickType,
+    FActorComponentTickFunction* ThisTickFunction)
+{
+    Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+    UpdateWeaponPresentation(DeltaTime);
 }
 
 void UFirearmComponent::BuildFallbackWeaponPresentation()
@@ -34,9 +45,10 @@ void UFirearmComponent::BuildFallbackWeaponPresentation()
     if (!Cube || !Cylinder) return;
 
     BaseViewModelLocation = Character->ViewModelRoot->GetRelativeLocation();
+    BaseViewModelRotation = Character->ViewModelRoot->GetRelativeRotation();
 
-    // Re-purpose the old single cuboid as the receiver, then layer enough simple shapes around it to
-    // read as an actual compact rifle even when the reference weapon mesh is unavailable.
+    // Compact improvised rifle silhouette. Reference weapon meshes can still replace the receiver,
+    // while these pieces keep the first-person view readable before imported art is available.
     Character->ViewWeapon->SetStaticMesh(Cube);
     Character->ViewWeapon->SetRelativeLocation(FVector(49.0f, 13.0f, -21.0f));
     Character->ViewWeapon->SetRelativeScale3D(FVector(0.27f, 0.055f, 0.075f));
@@ -50,8 +62,8 @@ void UFirearmComponent::BuildFallbackWeaponPresentation()
         Part->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         Part->SetOnlyOwnerSee(true);
         Part->SetCastShadow(false);
+        Part->SetupAttachment(Character->ViewModelRoot);
         Part->RegisterComponent();
-        Part->AttachToComponent(Character->ViewModelRoot, FAttachmentTransformRules::KeepRelativeTransform);
         Part->SetRelativeLocation(Location);
         Part->SetRelativeScale3D(Scale);
         Part->SetRelativeRotation(Rotation);
@@ -64,16 +76,45 @@ void UFirearmComponent::BuildFallbackWeaponPresentation()
     WeaponMagazine = MakePart(TEXT("FallbackWeaponMagazine"), Cube, FVector(56.0f, 13.0f, -30.0f), FVector(0.05f, 0.045f, 0.13f), FRotator(12.0f, 0.0f, 0.0f));
     WeaponSight = MakePart(TEXT("FallbackWeaponSight"), Cube, FVector(51.0f, 13.0f, -13.0f), FVector(0.055f, 0.028f, 0.025f), FRotator::ZeroRotator);
 
+    if (UMaterialInterface* BaseMaterial = LoadObject<UMaterialInterface>(
+        nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")))
+    {
+        auto MakeMaterial = [&](const TCHAR* Name, const FLinearColor& Color, float Roughness)
+        {
+            UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(BaseMaterial, Character, Name);
+            if (Material)
+            {
+                Material->SetVectorParameterValue(TEXT("Color"), Color);
+                Material->SetScalarParameterValue(TEXT("Roughness"), Roughness);
+            }
+            return Material;
+        };
+
+        UMaterialInstanceDynamic* Gunmetal = MakeMaterial(TEXT("Gunmetal"), FLinearColor(0.045f, 0.052f, 0.055f), 0.48f);
+        UMaterialInstanceDynamic* DarkMetal = MakeMaterial(TEXT("DarkGunMetal"), FLinearColor(0.018f, 0.022f, 0.024f), 0.38f);
+        UMaterialInstanceDynamic* StockMaterial = MakeMaterial(TEXT("WeaponStockMaterial"), FLinearColor(0.16f, 0.085f, 0.035f), 0.76f);
+
+        if (Gunmetal) Character->ViewWeapon->SetMaterial(0, Gunmetal);
+        if (StockMaterial && WeaponStock) WeaponStock->SetMaterial(0, StockMaterial);
+        if (DarkMetal && WeaponBarrel) WeaponBarrel->SetMaterial(0, DarkMetal);
+        if (DarkMetal && WeaponMagazine) WeaponMagazine->SetMaterial(0, DarkMetal);
+        if (Gunmetal && WeaponGrip) WeaponGrip->SetMaterial(0, Gunmetal);
+        if (DarkMetal && WeaponSight) WeaponSight->SetMaterial(0, DarkMetal);
+    }
+
     MuzzleFlashLight = NewObject<UPointLightComponent>(Character, TEXT("FallbackMuzzleFlash"));
     if (MuzzleFlashLight)
     {
         Character->AddInstanceComponent(MuzzleFlashLight);
+        MuzzleFlashLight->SetupAttachment(Character->ViewModelRoot);
+        MuzzleFlashLight->SetMobility(EComponentMobility::Movable);
         MuzzleFlashLight->SetIntensity(0.0f);
-        MuzzleFlashLight->SetAttenuationRadius(180.0f);
-        MuzzleFlashLight->SetLightColor(FLinearColor(1.0f, 0.48f, 0.12f));
+        MuzzleFlashLight->SetAttenuationRadius(260.0f);
+        MuzzleFlashLight->SetLightColor(FLinearColor(1.0f, 0.40f, 0.075f));
+        MuzzleFlashLight->SetCastShadows(false);
+        MuzzleFlashLight->VolumetricScatteringIntensity = 2.2f;
         MuzzleFlashLight->RegisterComponent();
-        MuzzleFlashLight->AttachToComponent(Character->ViewModelRoot, FAttachmentTransformRules::KeepRelativeTransform);
-        MuzzleFlashLight->SetRelativeLocation(FVector(93.0f, 13.0f, -20.0f));
+        MuzzleFlashLight->SetRelativeLocation(FVector(94.0f, 13.0f, -20.0f));
     }
 
     bPresentationBuilt = true;
@@ -81,29 +122,52 @@ void UFirearmComponent::BuildFallbackWeaponPresentation()
 
 void UFirearmComponent::PlayFirePresentation()
 {
-    ADeadbrickCharacter* Character = Cast<ADeadbrickCharacter>(GetOwner());
-    if (!Character || !Character->ViewModelRoot) return;
-
     if (!bPresentationBuilt) BuildFallbackWeaponPresentation();
 
-    Character->ViewModelRoot->SetRelativeLocation(BaseViewModelLocation + FVector(-3.5f, 0.0f, 1.4f));
-    if (MuzzleFlashLight) MuzzleFlashLight->SetIntensity(8500.0f);
+    RecoilLocation += FVector(
+        -FMath::FRandRange(3.2f, 4.5f),
+        FMath::FRandRange(-0.35f, 0.35f),
+        FMath::FRandRange(0.7f, 1.35f));
+    RecoilLocation.X = FMath::Max(RecoilLocation.X, -8.5f);
 
-    if (GetWorld())
-    {
-        GetWorld()->GetTimerManager().ClearTimer(FirePresentationTimer);
-        GetWorld()->GetTimerManager().SetTimer(FirePresentationTimer, this, &UFirearmComponent::ResetFirePresentation, 0.055f, false);
-    }
+    RecoilRotation.Pitch += FMath::FRandRange(-2.8f, -1.8f);
+    RecoilRotation.Yaw += FMath::FRandRange(-0.45f, 0.45f);
+    RecoilRotation.Roll += FMath::FRandRange(-0.55f, 0.55f);
+    RecoilRotation.Pitch = FMath::Max(RecoilRotation.Pitch, -6.5f);
+
+    MuzzleFlashAlpha = 1.0f;
 }
 
-void UFirearmComponent::ResetFirePresentation()
+void UFirearmComponent::UpdateWeaponPresentation(float DeltaTime)
 {
-    if (ADeadbrickCharacter* Character = Cast<ADeadbrickCharacter>(GetOwner()))
-    {
-        if (Character->ViewModelRoot)
-            Character->ViewModelRoot->SetRelativeLocation(BaseViewModelLocation);
-    }
-    if (MuzzleFlashLight) MuzzleFlashLight->SetIntensity(0.0f);
+    ADeadbrickCharacter* Character = Cast<ADeadbrickCharacter>(GetOwner());
+    if (!Character || !Character->ViewModelRoot) return;
+    if (!bPresentationBuilt) BuildFallbackWeaponPresentation();
+
+    const float Speed = Character->GetVelocity().Size2D();
+    const float MoveAlpha = FMath::Clamp(Speed / 650.0f, 0.0f, 1.0f);
+    WalkBobTime += DeltaTime * FMath::Lerp(2.1f, 8.2f, MoveAlpha);
+
+    const float SideWave = FMath::Sin(WalkBobTime);
+    const float StepWave = FMath::Sin(WalkBobTime * 2.0f);
+    const FVector BobLocation(
+        -FMath::Abs(StepWave) * 0.28f * MoveAlpha,
+        SideWave * 0.62f * MoveAlpha,
+        -FMath::Abs(SideWave) * 0.55f * MoveAlpha);
+    const FRotator BobRotation(
+        StepWave * 0.23f * MoveAlpha,
+        SideWave * 0.22f * MoveAlpha,
+        SideWave * 0.75f * MoveAlpha);
+
+    RecoilLocation = FMath::VInterpTo(RecoilLocation, FVector::ZeroVector, DeltaTime, 13.5f);
+    RecoilRotation = FMath::RInterpTo(RecoilRotation, FRotator::ZeroRotator, DeltaTime, 15.5f);
+
+    Character->ViewModelRoot->SetRelativeLocation(BaseViewModelLocation + BobLocation + RecoilLocation);
+    Character->ViewModelRoot->SetRelativeRotation(BaseViewModelRotation + BobRotation + RecoilRotation);
+
+    MuzzleFlashAlpha = FMath::FInterpTo(MuzzleFlashAlpha, 0.0f, DeltaTime, 42.0f);
+    if (MuzzleFlashLight)
+        MuzzleFlashLight->SetIntensity(11000.0f * MuzzleFlashAlpha);
 }
 
 bool UFirearmComponent::FireFromCamera(const FVector& Origin, const FVector& Direction)
@@ -119,9 +183,7 @@ bool UFirearmComponent::FireFromCamera(const FVector& Origin, const FVector& Dir
     PlayFirePresentation();
 
     if (UDeadbrickZombieDirectorSubsystem* Director = GetWorld()->GetSubsystem<UDeadbrickZombieDirectorSubsystem>())
-    {
         Director->ReportNoise(Origin, Stats.NoiseRadiusCm, Stats.NoiseIntensity, 4.0f);
-    }
 
     const FVector ShotDirection = Direction.GetSafeNormal();
     const FVector End = Origin + ShotDirection * Stats.RangeCm;
