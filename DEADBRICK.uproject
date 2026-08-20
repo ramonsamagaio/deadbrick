@@ -22,6 +22,10 @@
     {
       "Name": "EditorScriptingUtilities",
       "Enabled": true
+    },
+    {
+      "Name": "UnrealPSKPSA",
+      "Enabled": true
     }
   ]
 }
