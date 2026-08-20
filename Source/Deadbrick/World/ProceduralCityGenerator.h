@@ -55,6 +55,12 @@ public:
     UFUNCTION(CallInEditor, BlueprintCallable, Category="City")
     void GenerateCity();
 
+    // Runs after the deterministic shell generation. It widens stair circulation for the FPS capsule,
+    // adds district-specific facade accents, and guarantees physical scavenging containers even when
+    // the external reference meshes are not readable yet.
+    UFUNCTION(BlueprintCallable, Category="City")
+    void ImproveTraversalAndStreetLife();
+
 private:
     UPROPERTY(Transient) TArray<TObjectPtr<UStaticMesh>> ReferenceDoorMeshes;
     UPROPERTY(Transient) TArray<TObjectPtr<UStaticMesh>> ReferenceWindowMeshes;
