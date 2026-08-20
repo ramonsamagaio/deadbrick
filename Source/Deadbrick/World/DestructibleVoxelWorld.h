@@ -27,26 +27,23 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics")
     bool bEnableStructuralGravity = true;
 
-    // Connectivity is intentionally allowed to cross very large structures. Work is amortized over
-    // frames, so this is a safety ceiling rather than a per-frame cost ceiling.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="4096", ClampMax="524288"))
     int32 MaxStructuralScanVoxels = 262144;
 
-    // Target amount of voxel geometry represented by one macro rigid body. The collision for each
-    // macro body remains a cheap convex hull, so large detached structures do not become one body per voxel.
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="256", ClampMax="65536"))
-    int32 MaxPhysicsIslandVoxels = 4096;
+    // Detached structures are partitioned into small contiguous rubble clusters instead of long
+    // building-sized slabs. 48 ten-centimetre cells is the visual/interaction target; very large
+    // collapses automatically raise the effective target just enough to stay under the body cap.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="8", ClampMax="512"))
+    int32 MaxPhysicsIslandVoxels = 48;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="4096", ClampMax="524288"))
     int32 MaxDetachedComponentVoxels = 262144;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="1", ClampMax="32"))
-    int32 MaxPhysicsBodiesPerCollapse = 8;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="1", ClampMax="128"))
+    int32 MaxPhysicsBodiesPerCollapse = 64;
 
-    // Build at most this many heavy macro meshes per render frame. Once all are prepared, the static
-    // voxels are removed and all prepared bodies are activated together.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="1", ClampMax="8"))
-    int32 PhysicsIslandBuildBudgetPerFrame = 1;
+    int32 PhysicsIslandBuildBudgetPerFrame = 2;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="256", ClampMax="32768"))
     int32 StructuralWorkBudgetPerFrame = 4096;
@@ -54,8 +51,6 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="1", ClampMax="16"))
     int32 ChunkRebuildBudgetPerFrame = 2;
 
-    // Retained only for serialized compatibility with the previous prototype. It is no longer used
-    // to decide collapse; structural state is based on anchor connectivity.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics")
     float SupportCapacityPerGroundVoxel = 384.0f;
 
@@ -135,13 +130,9 @@ private:
     TSet<FIntVector> DirtyChunks;
     int32 BulkEditDepth = 0;
 
-    // Gameplay damage only adds seeds here. The current connectivity pass finishes before a fresh
-    // pass consumes new seeds, so rapid fire is coalesced instead of launching N full scans of one building.
     TSet<FIntVector> PendingStructuralSeeds;
     TArray<FStructuralQueryState> StructuralQueries;
 
-    // Cells already scheduled to become dynamic are excluded from subsequent seed collection until
-    // their prepared rigid bodies are activated.
     TSet<FIntVector> PendingCollapseCells;
     TArray<FPendingCollapseState> PendingCollapses;
 
