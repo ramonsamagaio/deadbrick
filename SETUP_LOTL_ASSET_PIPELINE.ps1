@@ -8,7 +8,10 @@ $ProgressPreference = "SilentlyContinue"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PluginRoot = Join-Path $ProjectRoot "Plugins\UnrealPSKPSA"
 $PluginDescriptor = Join-Path $PluginRoot "UnrealPSKPSA.uplugin"
-$PsaFactoryCpp = Join-Path $PluginRoot "Source\UnrealPSKPSA\Private\PSAFactory.cpp"
+$PrivateRoot = Join-Path $PluginRoot "Source\UnrealPSKPSA\Private"
+$PsaFactoryCpp = Join-Path $PrivateRoot "PSAFactory.cpp"
+$PskFactoryCpp = Join-Path $PrivateRoot "PSKFactory.cpp"
+$BpflCpp = Join-Path $PrivateRoot "BPFL.cpp"
 $Marker = Join-Path $ProjectRoot "Saved\LOTL_ACTORX_SETUP.txt"
 $Repository = "https://github.com/djhaled/UnrealPSKPSA.git"
 $PinnedCommit = "ec0e0a4624dd5e55fa9dcb235f6846f78bbeedb0"
@@ -23,20 +26,27 @@ function Find-Git {
 }
 
 function Test-PipelineReady {
-    if (-not (Test-Path $PluginDescriptor)) { return $false }
-    if (-not (Test-Path $PsaFactoryCpp)) { return $false }
-    return (Get-Content $PsaFactoryCpp -Raw) -match 'DEADBRICK_AUTOMATED_PSA'
+    foreach ($Path in @($PluginDescriptor, $PsaFactoryCpp, $PskFactoryCpp, $BpflCpp)) {
+        if (-not (Test-Path $Path)) { return $false }
+    }
+
+    $PsaText = Get-Content $PsaFactoryCpp -Raw
+    $PskText = Get-Content $PskFactoryCpp -Raw
+    $BpflText = Get-Content $BpflCpp -Raw
+    return ($PsaText -match 'DEADBRICK_AUTOMATED_PSA') -and
+           ($PskText -match 'DEADBRICK_UE58_COMPAT') -and
+           ($BpflText -match 'DEADBRICK_UE58_COMPAT')
 }
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host " DEADBRICK - Lay of the Land ActorX asset pipeline" -ForegroundColor Cyan
-Write-Host " PSK/PSKX skeletal meshes + PSA animations" -ForegroundColor Cyan
+Write-Host " PSK/PSKX skeletal meshes + PSA animations | UE 5.8" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
 if ((Test-PipelineReady) -and -not $Force) {
-    Write-Host "LOTL ActorX importer is already installed and patched for unattended import." -ForegroundColor Green
+    Write-Host "LOTL ActorX importer is already patched for UE 5.8 and unattended import." -ForegroundColor Green
     exit 0
 }
 
@@ -57,12 +67,14 @@ if ($LASTEXITCODE -ne 0) { throw "Could not fetch pinned UnrealPSKPSA revision."
 & $Git -C $PluginRoot checkout --force $PinnedCommit
 if ($LASTEXITCODE -ne 0) { throw "Could not checkout pinned UnrealPSKPSA revision." }
 
-if (-not (Test-Path $PsaFactoryCpp)) { throw "PSAFactory.cpp is missing from the ActorX plugin." }
-$Text = Get-Content $PsaFactoryCpp -Raw
+foreach ($Path in @($PsaFactoryCpp, $PskFactoryCpp, $BpflCpp)) {
+    if (-not (Test-Path $Path)) { throw "ActorX plugin source is missing: $Path" }
+}
 
 # Upstream always opens a modal skeleton picker, even when UAssetImportTask is marked automated.
 # DEADBRICK sets SettingsImporter.Skeleton from Python, so skip the window when that skeleton exists.
-if ($Text -notmatch 'DEADBRICK_AUTOMATED_PSA') {
+$PsaText = Get-Content $PsaFactoryCpp -Raw
+if ($PsaText -notmatch 'DEADBRICK_AUTOMATED_PSA') {
     $Old = "`tbool ks = IsAutomatedImport();"
     $New = @"
 `t// DEADBRICK_AUTOMATED_PSA: unattended CUE4Parse PSA import supplies the skeleton on the factory.
@@ -74,8 +86,8 @@ if ($Text -notmatch 'DEADBRICK_AUTOMATED_PSA') {
 `t`tbImportAll = true;
 `t}
 "@
-    if (-not $Text.Contains($Old)) { throw "Unexpected PSAFactory.cpp layout. Refusing to patch an unknown importer revision." }
-    $Text = $Text.Replace($Old, $New.TrimEnd())
+    if (-not $PsaText.Contains($Old)) { throw "Unexpected PSAFactory.cpp layout. Refusing to patch an unknown importer revision." }
+    $PsaText = $PsaText.Replace($Old, $New.TrimEnd())
 
     $SkeletonLine = "`tUSkeleton* Skeleton = SettingsImporter->Skeleton;"
     $SkeletonGuard = @"
@@ -86,15 +98,42 @@ if ($Text -notmatch 'DEADBRICK_AUTOMATED_PSA') {
 `t}
 `tUSkeleton* Skeleton = SettingsImporter->Skeleton;
 "@
-    if (-not $Text.Contains($SkeletonLine)) { throw "Could not locate PSA skeleton assignment for automation patch." }
-    $Text = $Text.Replace($SkeletonLine, $SkeletonGuard.TrimEnd())
+    if (-not $PsaText.Contains($SkeletonLine)) { throw "Could not locate PSA skeleton assignment for automation patch." }
+    $PsaText = $PsaText.Replace($SkeletonLine, $SkeletonGuard.TrimEnd())
 
     # Upstream logs every animation key at Warning level. Large LOTL animation sets become painfully slow.
-    $Text = $Text -replace '\s*UE_LOG\(LogTemp, Warning, TEXT\(" Position %s"\), \*AnimKey\.Position\.ToString\(\)\);', ''
-    Set-Content $PsaFactoryCpp -Value $Text -Encoding UTF8
+    $PsaText = $PsaText -replace '\s*UE_LOG\(LogTemp, Warning, TEXT\(" Position %s"\), \*AnimKey\.Position\.ToString\(\)\);', ''
+    Set-Content $PsaFactoryCpp -Value $PsaText -Encoding UTF8
 }
 
-if (-not (Test-PipelineReady)) { throw "ActorX plugin automation patch did not validate." }
+# UE 5.8 compatibility. Epic moved FStaticMeshComponentLODInfo to its own public header,
+# UBodySetup requires its concrete header, CreatePackage is now the one-argument API, and
+# the old renderer line accidentally used comparison instead of assignment.
+$BpflText = Get-Content $BpflCpp -Raw
+if ($BpflText -notmatch 'DEADBRICK_UE58_COMPAT') {
+    if ($BpflText -notmatch '#include\s+"StaticMeshComponentLODInfo\.h"') {
+        $BpflText = $BpflText.Replace(
+            '#include "Components/StaticMeshComponent.h"',
+            "#include `"Components/StaticMeshComponent.h`"`r`n#include `"StaticMeshComponentLODInfo.h`"`r`n#include `"PhysicsEngine/BodySetup.h`"")
+    }
+
+    $BpflText = $BpflText -replace 'Settings->Reflections\s*==\s*EReflectionMethod::None\s*;', 'Settings->Reflections = EReflectionMethod::None;'
+    $BpflText = $BpflText -replace 'CreatePackage\(nullptr\s*,\s*\*PathForTextures\)', 'CreatePackage(*PathForTextures)'
+    $BpflText = "// DEADBRICK_UE58_COMPAT: patched automatically for Unreal Engine 5.8.`r`n" + $BpflText
+    Set-Content $BpflCpp -Value $BpflText -Encoding UTF8
+}
+
+# UE 5.8 removed these two legacy FSkeletalMeshImportData flags. Their old values here were both false,
+# so removing the assignments preserves the intended behavior while using the current importer structure.
+$PskText = Get-Content $PskFactoryCpp -Raw
+if ($PskText -notmatch 'DEADBRICK_UE58_COMPAT') {
+    $PskText = $PskText -replace '(?m)^\s*SkeletalMeshImportData\.bDiffPose\s*=\s*false;\s*\r?\n', ''
+    $PskText = $PskText -replace '(?m)^\s*SkeletalMeshImportData\.bUseT0AsRefPose\s*=\s*false;\s*\r?\n', ''
+    $PskText = "// DEADBRICK_UE58_COMPAT: removed legacy FSkeletalMeshImportData fields for Unreal Engine 5.8.`r`n" + $PskText
+    Set-Content $PskFactoryCpp -Value $PskText -Encoding UTF8
+}
+
+if (-not (Test-PipelineReady)) { throw "ActorX UE 5.8 compatibility/automation patch did not validate." }
 
 New-Item -ItemType Directory -Path (Split-Path -Parent $Marker) -Force | Out-Null
 @(
@@ -103,8 +142,9 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $Marker) -Force | Out-Nul
     "Repository: $Repository",
     "PinnedCommit: $PinnedCommit",
     "AutomatedPSA: true",
+    "UE58Compat: true",
     "Plugin: $PluginRoot"
 ) | Set-Content $Marker -Encoding UTF8
 
-Write-Host "LOTL ActorX importer ready." -ForegroundColor Green
+Write-Host "LOTL ActorX importer ready for Unreal Engine 5.8." -ForegroundColor Green
 exit 0
