@@ -10,6 +10,7 @@ set "EDITOR_CMD=%ENGINE_DIR%\Engine\Binaries\Win64\UnrealEditor-Cmd.exe"
 set "CLEAN_SCRIPT=%PROJECT_DIR%CLEAN_INVALID_REFERENCE_CONTENT.ps1"
 set "PHYSX_SETUP=%PROJECT_DIR%SETUP_PHYSX5_UE58.ps1"
 set "LOTL_PIPELINE_SETUP=%PROJECT_DIR%SETUP_LOTL_ASSET_PIPELINE.ps1"
+set "REFERENCE_PREP_SCRIPT=%PROJECT_DIR%IMPORT_LOTL_REFERENCE_UE58.ps1"
 set "REFERENCE_EXPORT=%PROJECT_DIR%ReferenceExported"
 set "REFERENCE_EXPORT_SCRIPT=%PROJECT_DIR%EXPORT_LOTL_EDITOR_ASSETS.ps1"
 set "REFERENCE_IMPORT_SCRIPT=%PROJECT_DIR%Tools\import_lotl_reference.py"
@@ -49,7 +50,7 @@ rem PhysX is now a required runtime for DEADBRICK voxel collapse. Do not silentl
 rem build when the SDK is missing: install the pinned official 5.8 SDK first and fail loudly on error.
 if not exist "%PHYSX_DLL%" (
     echo.
-    echo [1/5] PhysX 5.8 SDK missing. Bootstrapping the pinned NVIDIA SDK...
+    echo [1/6] PhysX 5.8 SDK missing. Bootstrapping the pinned NVIDIA SDK...
     if not exist "%PHYSX_SETUP%" (
         echo ERROR: SETUP_PHYSX5_UE58.ps1 is missing.
         pause
@@ -66,14 +67,14 @@ if not exist "%PHYSX_DLL%" (
         exit /b 10
     )
 ) else (
-    echo [1/5] PhysX 5.8 SDK ready.
+    echo [1/6] PhysX 5.8 SDK ready.
 )
 
-rem The project explicitly enables UnrealPSKPSA because CUE4Parse gives us PSK/PSA for the original
-rem LOTL skeletal meshes and animations. Install/patch it before UBT sees the .uproject.
+rem CUE4Parse exports LOTL skeletal assets as PSK/PSA. Install and patch the ActorX importer before
+rem UBT reads the project, otherwise the recovered character meshes and animations cannot enter UE.
 if not exist "%ACTORX_PLUGIN%" (
     echo.
-    echo [2/5] LOTL ActorX importer missing. Installing pinned importer...
+    echo [2/6] LOTL ActorX importer missing. Installing pinned importer...
     if not exist "%LOTL_PIPELINE_SETUP%" (
         echo ERROR: SETUP_LOTL_ASSET_PIPELINE.ps1 is missing.
         pause
@@ -89,14 +90,13 @@ if not exist "%ACTORX_PLUGIN%" (
         exit /b 11
     )
 ) else (
-    rem Re-run quickly so an existing checkout also receives the unattended-PSA patch.
     powershell -NoProfile -ExecutionPolicy Bypass -File "%LOTL_PIPELINE_SETUP%"
     if errorlevel 1 (
         echo ERROR: existing LOTL ActorX importer could not be validated/patched.
         pause
         exit /b 11
     )
-    echo [2/5] LOTL ActorX importer ready.
+    echo [2/6] LOTL ActorX importer ready.
 )
 
 if exist "%CLEAN_SCRIPT%" (
@@ -114,6 +114,22 @@ if exist "%CLEAN_SCRIPT%" (
     )
 )
 
+rem A fresh checkout may have none of the 2 GB local reference data. The preparation script searches
+rem the standard Steam LOTL locations itself, converts IoStore to an isolated legacy pak, and exports
+rem editor-safe assets without recursively launching this rebuild.
+if not exist "%LOTL_LEGACY_PAK%" if exist "%REFERENCE_PREP_SCRIPT%" (
+    echo.
+    echo [3/6] Local LOTL legacy pak missing. Auto-detecting the Steam install and preparing reference data...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%REFERENCE_PREP_SCRIPT%" -SkipRebuild -NonInteractive
+    if errorlevel 1 (
+        echo WARNING: automatic LOTL preparation did not complete.
+        echo If Lay of the Land is installed somewhere non-standard, run IMPORT_LOTL_REFERENCE_UE58.bat once and point it at Content\Paks.
+        echo The PhysX build can continue, but unavailable LOTL assets obviously cannot be bound.
+    )
+) else (
+    echo [3/6] Local LOTL legacy reference pak ready.
+)
+
 set "HAS_REFERENCE_EXPORT=0"
 set "HAS_LOTL_PSK=0"
 set "HAS_LOTL_PSA=0"
@@ -126,8 +142,8 @@ if exist "%REFERENCE_EXPORT%" (
     dir /S /B "%REFERENCE_EXPORT%\*.png" 2>NUL | findstr /R "." >NUL && set "HAS_REFERENCE_EXPORT=1"
 )
 
-rem Older DEADBRICK exports only contained GLTF/textures. If the local LOTL pak exists but PSK or PSA
-rem is absent, regenerate now so player/enemy skins and original animation sequences actually enter UE.
+rem Older DEADBRICK exports only contained GLTF/textures. Regenerate if PSK or PSA is missing so
+rem player/enemy skins, first-person arms and original animation sequences actually enter UE.
 set "NEED_LOTL_EXPORT=0"
 if "%HAS_REFERENCE_EXPORT%"=="0" set "NEED_LOTL_EXPORT=1"
 if "%HAS_LOTL_PSK%"=="0" set "NEED_LOTL_EXPORT=1"
@@ -135,23 +151,23 @@ if "%HAS_LOTL_PSA%"=="0" set "NEED_LOTL_EXPORT=1"
 
 if "%NEED_LOTL_EXPORT%"=="1" if exist "%LOTL_LEGACY_PAK%" if exist "%REFERENCE_EXPORT_SCRIPT%" (
     echo.
-    echo [3/5] Exporting full LOTL asset families: GLTF + PSK + PSA + textures + metadata...
+    echo [4/6] Exporting full LOTL families: GLTF + PSK + PSA + textures + metadata...
     powershell -NoProfile -ExecutionPolicy Bypass -File "%REFERENCE_EXPORT_SCRIPT%" -LegacyPak "%LOTL_LEGACY_PAK%"
     if errorlevel 1 (
         echo WARNING: LOTL export reported undecodable families.
         echo Check ReferenceExtracted\Logs\cue4parse_priority_export.txt.
-        echo Build continues so recovered families can still be imported.
+        echo Recovered families remain usable and will still be imported.
     )
 ) else (
     if "%NEED_LOTL_EXPORT%"=="0" (
-        echo [3/5] Full LOTL export already contains skeletal meshes and animations.
+        echo [4/6] Full LOTL export already contains skeletal meshes and animations.
     ) else (
-        echo [3/5] No local LOTL legacy pak found. Existing exported assets, if any, will be used.
+        echo [4/6] No local LOTL legacy pak is available; existing exports, if any, will be used.
     )
 )
 
 echo.
-echo [4/5] Removing stale compiled binaries and generated files...
+echo [5/6] Removing stale compiled binaries and generated files...
 if exist "%PROJECT_DIR%Binaries" rmdir /S /Q "%PROJECT_DIR%Binaries"
 if exist "%PROJECT_DIR%Intermediate" rmdir /S /Q "%PROJECT_DIR%Intermediate"
 if exist "%PROJECT_DIR%.vs" rmdir /S /Q "%PROJECT_DIR%.vs"
@@ -181,7 +197,7 @@ if exist "%REFERENCE_EXPORT%" (
 
 if "%HAS_REFERENCE_EXPORT%"=="1" if exist "%REFERENCE_IMPORT_SCRIPT%" if exist "%EDITOR_CMD%" (
     echo.
-    echo [5/5] Importing Lay of the Land static meshes, skeletal meshes, animations and textures...
+    echo [6/6] Importing Lay of the Land static meshes, skeletal meshes, animations and textures...
     "%EDITOR_CMD%" "%PROJECT%" -run=pythonscript -script="%REFERENCE_IMPORT_SCRIPT%" -unattended -nop4 -nosplash
     if errorlevel 1 (
         echo WARNING: LOTL editor import returned an error.
@@ -192,8 +208,8 @@ if "%HAS_REFERENCE_EXPORT%"=="1" if exist "%REFERENCE_IMPORT_SCRIPT%" if exist "
     )
 ) else (
     echo.
-    echo [5/5] WARNING: no editor-safe LOTL visual export is available.
-    echo PhysX DEADBRICK will open, but reference visuals cannot be bound until the local LOTL export exists.
+    echo [6/6] WARNING: no editor-safe LOTL visual export is available.
+    echo PhysX DEADBRICK will open, but reference visuals cannot bind until local LOTL data is prepared.
 )
 
 echo.
