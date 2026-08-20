@@ -7,7 +7,7 @@ public:
     virtual void StartupModule() override
     {
         FDefaultGameModuleImpl::StartupModule();
-        UE_LOG(LogTemp, Display, TEXT("DEADBRICK MODULE BUILD 2026-08-19-M PHYSX5-LOTL-PSK-PSA-INTEGRATION LOADED"));
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK MODULE BUILD 2026-08-20-N PHYSX5-ISOLATED-BRIDGE-UE58-ACTORX LOADED"));
     }
 };
 
