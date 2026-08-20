@@ -37,6 +37,7 @@ int64_t DBPX_CreateDynamicBox(
 
 void DBPX_DestroyBody(DBPXScene* Scene, int64_t Handle);
 int32_t DBPX_GetBodyTransform(DBPXScene* Scene, int64_t Handle, DBPXTransform* OutTransform);
+int32_t DBPX_AddImpulse(DBPXScene* Scene, int64_t Handle, float X, float Y, float Z);
 
 #ifdef __cplusplus
 }
