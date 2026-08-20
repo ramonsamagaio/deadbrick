@@ -59,23 +59,26 @@ function Install-Cue4Parse {
 }
 
 function New-CommonArgs {
-    $Args = New-Object System.Collections.Generic.List[string]
-    $Args.Add('--pak'); $Args.Add($LegacyPak)
-    $Args.Add('-g'); $Args.Add('GAME_UE5_LATEST')
-    if ($Mappings) { $Args.Add('-m'); $Args.Add($Mappings.FullName) }
-    return $Args
+    $CueArgs = New-Object System.Collections.Generic.List[string]
+    $CueArgs.Add('--pak'); $CueArgs.Add($LegacyPak)
+    $CueArgs.Add('-g'); $CueArgs.Add('GAME_UE5_LATEST')
+    if ($Mappings) { $CueArgs.Add('-m'); $CueArgs.Add($Mappings.FullName) }
+
+    # PowerShell enumerates IEnumerable return values by default. The unary comma keeps the
+    # mutable List[string] intact instead of turning it into a fixed-size Object[] at the caller.
+    return ,$CueArgs
 }
 
 function Invoke-PatternExport([string]$Label, [string]$Pattern, [string[]]$ExtraArgs) {
     Write-Host "  $Label $Pattern" -ForegroundColor DarkCyan
-    $Args = New-CommonArgs
-    $Args.Add('-o'); $Args.Add($ExportRoot)
-    foreach ($Arg in $ExtraArgs) { $Args.Add($Arg) }
-    $Args.Add('-y')
-    $Args.Add('-p'); $Args.Add($Pattern)
+    $CueArgs = New-CommonArgs
+    $CueArgs.Add('-o'); $CueArgs.Add($ExportRoot)
+    foreach ($Arg in $ExtraArgs) { $CueArgs.Add($Arg) }
+    $CueArgs.Add('-y')
+    $CueArgs.Add('-p'); $CueArgs.Add($Pattern)
 
     "=== $Label $Pattern ===" | Add-Content $ExportLog
-    & $Cue4Parse @Args 2>&1 | Add-Content $ExportLog
+    & $Cue4Parse @CueArgs 2>&1 | Add-Content $ExportLog
     return $LASTEXITCODE
 }
 
@@ -130,11 +133,11 @@ $AllPatterns = @($StaticPatterns + $SkeletalPatterns + $AnimationPatterns + $Met
 Write-Host ""
 Write-Host "[A] Listing candidate package families..." -ForegroundColor Cyan
 foreach ($Pattern in $AllPatterns) {
-    $Args = New-CommonArgs
-    $Args.Add('-p'); $Args.Add($Pattern)
-    $Args.Add('-l')
+    $CueArgs = New-CommonArgs
+    $CueArgs.Add('-p'); $CueArgs.Add($Pattern)
+    $CueArgs.Add('-l')
     "=== $Pattern ===" | Add-Content $PackageListLog
-    & $Cue4Parse @Args 2>&1 | Add-Content $PackageListLog
+    & $Cue4Parse @CueArgs 2>&1 | Add-Content $PackageListLog
 }
 Write-Host "Package inventory: $PackageListLog" -ForegroundColor DarkGray
 
