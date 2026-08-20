@@ -3,6 +3,8 @@
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
 #include "Reference/ReferenceAssetResolver.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -34,6 +36,55 @@ namespace
         static TWeakObjectPtr<UStaticMesh> Cached;
         if (!Cached.IsValid()) Cached = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cone.Cone"));
         return Cached.Get();
+    }
+
+    FLinearColor PickupColor(EDeadbrickItemType Type)
+    {
+        switch (Type)
+        {
+            case EDeadbrickItemType::WoodScrap:
+            case EDeadbrickItemType::WoodenBarricade: return FLinearColor(0.34f, 0.16f, 0.055f);
+            case EDeadbrickItemType::BrickFragment: return FLinearColor(0.48f, 0.105f, 0.06f);
+            case EDeadbrickItemType::ConcreteRubble: return FLinearColor(0.36f, 0.39f, 0.39f);
+            case EDeadbrickItemType::GlassShard: return FLinearColor(0.19f, 0.58f, 0.68f);
+            case EDeadbrickItemType::MetalScrap:
+            case EDeadbrickItemType::MetalPlate:
+            case EDeadbrickItemType::Nails: return FLinearColor(0.20f, 0.27f, 0.32f);
+            case EDeadbrickItemType::AsphaltChunk: return FLinearColor(0.055f, 0.06f, 0.065f);
+            case EDeadbrickItemType::SoilClump: return FLinearColor(0.20f, 0.12f, 0.055f);
+            case EDeadbrickItemType::Cloth:
+            case EDeadbrickItemType::Bandage: return FLinearColor(0.66f, 0.61f, 0.50f);
+            case EDeadbrickItemType::Electronics:
+            case EDeadbrickItemType::Battery: return FLinearColor(0.12f, 0.42f, 0.36f);
+            case EDeadbrickItemType::Plastic: return FLinearColor(0.26f, 0.48f, 0.54f);
+            case EDeadbrickItemType::Wire:
+            case EDeadbrickItemType::MechanicalParts: return FLinearColor(0.40f, 0.30f, 0.12f);
+            case EDeadbrickItemType::Ammo9mm:
+            case EDeadbrickItemType::RifleAmmo: return FLinearColor(0.78f, 0.42f, 0.075f);
+            case EDeadbrickItemType::ShotgunShells: return FLinearColor(0.58f, 0.055f, 0.035f);
+            case EDeadbrickItemType::CannedFood: return FLinearColor(0.43f, 0.36f, 0.16f);
+            case EDeadbrickItemType::WaterBottle:
+            case EDeadbrickItemType::PurifiedWater: return FLinearColor(0.12f, 0.43f, 0.72f);
+            case EDeadbrickItemType::MedicalSupplies:
+            case EDeadbrickItemType::RepairKit: return FLinearColor(0.70f, 0.72f, 0.66f);
+            case EDeadbrickItemType::Fuel:
+            case EDeadbrickItemType::Molotov: return FLinearColor(0.66f, 0.50f, 0.08f);
+            default: return FLinearColor(0.38f, 0.40f, 0.39f);
+        }
+    }
+
+    void TintFallbackPart(UObject* Outer, UStaticMeshComponent* Part, const FLinearColor& Color)
+    {
+        if (!Outer || !Part || !Part->GetStaticMesh()) return;
+        UMaterialInterface* BaseMaterial = LoadObject<UMaterialInterface>(
+            nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+        if (!BaseMaterial) return;
+
+        UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(BaseMaterial, Outer);
+        if (!Material) return;
+        Material->SetVectorParameterValue(TEXT("Color"), Color);
+        Material->SetScalarParameterValue(TEXT("Roughness"), 0.78f);
+        Part->SetMaterial(0, Material);
     }
 }
 
@@ -107,6 +158,10 @@ void ADeadbrickPickupItem::InitializeItem(EDeadbrickItemType InType, int32 InQua
     else
     {
         ConfigureFallbackVisual(DesiredSizeCm);
+        const FLinearColor Color = PickupColor(ItemType);
+        TintFallbackPart(this, MeshComponent, Color);
+        TintFallbackPart(this, DetailMeshComponent, Color * 0.76f);
+        TintFallbackPart(this, AccentMeshComponent, Color * 1.16f);
     }
 
     PhysicsBody->SetSphereRadius(FMath::Max(6.0f, DesiredSizeCm * 0.48f), true);
