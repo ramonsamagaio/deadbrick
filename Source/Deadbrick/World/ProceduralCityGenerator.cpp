@@ -48,6 +48,8 @@ void AProceduralCityGenerator::LoadReferencePropMeshes()
     ReferenceDoorMeshes.Reset();
     ReferenceWindowMeshes.Reset();
     ReferenceContainerMeshes.Reset();
+    ReferenceFurnitureMeshes.Reset();
+    ReferenceUtilityMeshes.Reset();
 
     for (UStaticMesh* Mesh : DeadbrickReferenceAssets::FindStaticMeshes({TEXT("door"), TEXT("gate"), TEXT("hatch")}, 12))
         if (Mesh) ReferenceDoorMeshes.Add(Mesh);
@@ -55,9 +57,18 @@ void AProceduralCityGenerator::LoadReferencePropMeshes()
         if (Mesh) ReferenceWindowMeshes.Add(Mesh);
     for (UStaticMesh* Mesh : DeadbrickReferenceAssets::FindStaticMeshes({TEXT("container"), TEXT("crate"), TEXT("locker"), TEXT("chest"), TEXT("box")}, 16))
         if (Mesh) ReferenceContainerMeshes.Add(Mesh);
+    for (UStaticMesh* Mesh : DeadbrickReferenceAssets::FindStaticMeshes({TEXT("chair"), TEXT("table"), TEXT("desk"), TEXT("shelf"), TEXT("bed"), TEXT("cabinet")}, 20))
+        if (Mesh) ReferenceFurnitureMeshes.Add(Mesh);
+    for (UStaticMesh* Mesh : DeadbrickReferenceAssets::FindStaticMeshes({TEXT("pipe"), TEXT("vent"), TEXT("barrel"), TEXT("generator"), TEXT("utility"), TEXT("machine")}, 20))
+        if (Mesh) ReferenceUtilityMeshes.Add(Mesh);
 
-    UE_LOG(LogTemp, Display, TEXT("DEADBRICK reference prop pools: %d doors, %d windows, %d containers"),
-        ReferenceDoorMeshes.Num(), ReferenceWindowMeshes.Num(), ReferenceContainerMeshes.Num());
+    UE_LOG(LogTemp, Display,
+        TEXT("DEADBRICK reference prop pools: %d doors, %d windows, %d containers, %d furniture, %d utility"),
+        ReferenceDoorMeshes.Num(),
+        ReferenceWindowMeshes.Num(),
+        ReferenceContainerMeshes.Num(),
+        ReferenceFurnitureMeshes.Num(),
+        ReferenceUtilityMeshes.Num());
 }
 
 UStaticMesh* AProceduralCityGenerator::PickReferenceMesh(const TArray<TObjectPtr<UStaticMesh>>& Pool, FRandomStream& Stream) const
@@ -141,9 +152,17 @@ void AProceduralCityGenerator::BuildBlock(int32 BlockX, int32 BlockY, EDeadbrick
                 ? EDeadbrickVoxelMaterial::Concrete
                 : EDeadbrickVoxelMaterial::Brick;
 
-        BuildShell(FIntVector(X0, Y0, 0), FIntVector(X1, Y1, Z1), FloorV, WallMaterial, Stream);
+        // Raised pavement apron makes the lot read as an urban building rather than a box planted
+        // directly into an asphalt plane. It remains voxel material and can still be broken.
+        VoxelWorld->FillBox(
+            FIntVector(X0 - 3, Y0 - 3, 1),
+            FIntVector(X1 + 3, Y1 + 3, 1),
+            EDeadbrickVoxelMaterial::Concrete);
 
-        if (ReferenceContainerMeshes.Num() > 0 && Stream.FRand() < 0.75f)
+        BuildShell(FIntVector(X0, Y0, 0), FIntVector(X1, Y1, Z1), FloorV, WallMaterial, Stream);
+        SpawnReferenceClutter(FIntVector(X0, Y0, 0), FIntVector(X1, Y1, Z1), FloorV, Stream);
+
+        if (ReferenceContainerMeshes.Num() > 0 && Stream.FRand() < 0.80f)
         {
             UStaticMesh* ContainerMesh = PickReferenceMesh(ReferenceContainerMeshes, Stream);
             const FVector ContainerLocation = VoxelWorld->VoxelToWorld(FIntVector(X0 + 3, FMath::Max(1, Y0 - 5), 3));
@@ -151,7 +170,7 @@ void AProceduralCityGenerator::BuildBlock(int32 BlockX, int32 BlockY, EDeadbrick
                 ContainerMesh,
                 ContainerLocation,
                 FRotator(0.0f, Stream.FRandRange(-20.0f, 20.0f), 0.0f),
-                FVector(180.0f, 100.0f, 110.0f),
+                FVector(150.0f, 95.0f, 105.0f),
                 EDeadbrickVoxelMaterial::Metal,
                 110.0f,
                 EDeadbrickReferencePropRole::Container);
@@ -240,6 +259,17 @@ void AProceduralCityGenerator::BuildShell(
                 VoxelWorld->SetVoxel(FIntVector(X, Min.Y + 1, Z), EDeadbrickVoxelMaterial::Air, 0);
             }
 
+            // Destructible metal sill/header gives openings actual construction detail even before a
+            // reference window mesh is available.
+            VoxelWorld->FillBox(
+                FIntVector(WindowCenter - WindowHalfWidth - 1, Min.Y - 1, WindowBottom - 1),
+                FIntVector(WindowCenter + WindowHalfWidth + 1, Min.Y - 1, WindowBottom - 1),
+                EDeadbrickVoxelMaterial::Metal);
+            VoxelWorld->FillBox(
+                FIntVector(WindowCenter - WindowHalfWidth - 1, Min.Y - 1, WindowTop + 1),
+                FIntVector(WindowCenter + WindowHalfWidth + 1, Min.Y - 1, WindowTop + 1),
+                EDeadbrickVoxelMaterial::Metal);
+
             if (UStaticMesh* WindowMesh = PickReferenceMesh(ReferenceWindowMeshes, Stream))
             {
                 const int32 WindowMidZ = (WindowBottom + WindowTop) / 2;
@@ -254,6 +284,9 @@ void AProceduralCityGenerator::BuildShell(
             }
         }
     }
+
+    BuildFacadeDetails(Min, Max, FloorHeightVoxels, Stream);
+    BuildRoofDetails(Min, Max, Stream);
 }
 
 void AProceduralCityGenerator::BuildInterior(
@@ -292,6 +325,44 @@ void AProceduralCityGenerator::BuildInterior(
         for (int32 X = DoorX - DoorHalfWidth; X <= DoorX + DoorHalfWidth; ++X)
         for (int32 Z = WallBottom; Z <= DoorHeight; ++Z)
             VoxelWorld->SetVoxel(FIntVector(X, SplitY, Z), EDeadbrickVoxelMaterial::Air, 0);
+
+        // Load-bearing columns make the interior visually legible and give structural destruction
+        // meaningful targets instead of every floor being an empty cross-shaped shell.
+        const int32 ColumnXs[2] = { InnerMinX + 3, InnerMaxX - 3 };
+        const int32 ColumnYs[2] = { InnerMinY + 3, InnerMaxY - 3 };
+        for (const int32 CX : ColumnXs)
+        for (const int32 CY : ColumnYs)
+        {
+            VoxelWorld->FillBox(
+                FIntVector(CX, CY, WallBottom),
+                FIntVector(CX + 1, CY + 1, WallTop),
+                EDeadbrickVoxelMaterial::Concrete);
+        }
+
+        // Small counters, shelving and utility benches. They are voxel-backed, material-aware and
+        // salvageable, so interior clutter participates in the same destruction loop.
+        if (Stream.FRand() < 0.80f)
+        {
+            const int32 CounterLength = FMath::Clamp((InnerMaxX - InnerMinX) / 4, 4, 10);
+            VoxelWorld->FillBox(
+                FIntVector(InnerMinX + 2, InnerMinY + 1, WallBottom),
+                FIntVector(InnerMinX + 2 + CounterLength, InnerMinY + 3, FMath::Min(WallBottom + 3, WallTop)),
+                Stream.FRand() < 0.5f ? EDeadbrickVoxelMaterial::Wood : EDeadbrickVoxelMaterial::Metal);
+        }
+
+        if (Stream.FRand() < 0.55f)
+        {
+            const int32 ClosetX = InnerMaxX - 5;
+            const int32 ClosetY = InnerMaxY - 5;
+            VoxelWorld->FillBox(
+                FIntVector(ClosetX, ClosetY, WallBottom),
+                FIntVector(InnerMaxX, ClosetY, FMath::Min(WallBottom + 5, WallTop)),
+                EDeadbrickVoxelMaterial::Wood);
+            VoxelWorld->FillBox(
+                FIntVector(ClosetX, ClosetY, WallBottom),
+                FIntVector(ClosetX, InnerMaxY, FMath::Min(WallBottom + 5, WallTop)),
+                EDeadbrickVoxelMaterial::Wood);
+        }
     }
 }
 
@@ -322,6 +393,144 @@ void AProceduralCityGenerator::BuildVoxelStairwell(const FIntVector& Min, const 
                 VoxelWorld->SetVoxel(FIntVector(X, StairY0 + Step, FloorBase + 2 + Height), EDeadbrickVoxelMaterial::Concrete);
             }
         }
+    }
+}
+
+void AProceduralCityGenerator::BuildFacadeDetails(
+    const FIntVector& Min,
+    const FIntVector& Max,
+    int32 FloorHeightVoxels,
+    FRandomStream& Stream)
+{
+    // Corner piers stop the procedural shell from reading as four perfectly flat planes.
+    VoxelWorld->FillBox(FIntVector(Min.X - 1, Min.Y - 1, Min.Z + 2), FIntVector(Min.X, Min.Y, Max.Z - 1), EDeadbrickVoxelMaterial::Concrete);
+    VoxelWorld->FillBox(FIntVector(Max.X, Min.Y - 1, Min.Z + 2), FIntVector(Max.X + 1, Min.Y, Max.Z - 1), EDeadbrickVoxelMaterial::Concrete);
+    VoxelWorld->FillBox(FIntVector(Min.X - 1, Max.Y, Min.Z + 2), FIntVector(Min.X, Max.Y + 1, Max.Z - 1), EDeadbrickVoxelMaterial::Concrete);
+    VoxelWorld->FillBox(FIntVector(Max.X, Max.Y, Min.Z + 2), FIntVector(Max.X + 1, Max.Y + 1, Max.Z - 1), EDeadbrickVoxelMaterial::Concrete);
+
+    // Floor bands, facade ledges and a real projecting entrance canopy.
+    for (int32 FloorBase = Min.Z + FloorHeightVoxels; FloorBase < Max.Z; FloorBase += FloorHeightVoxels)
+    {
+        VoxelWorld->FillBox(FIntVector(Min.X, Min.Y - 1, FloorBase), FIntVector(Max.X, Min.Y - 1, FloorBase), EDeadbrickVoxelMaterial::Concrete);
+        VoxelWorld->FillBox(FIntVector(Min.X, Max.Y + 1, FloorBase), FIntVector(Max.X, Max.Y + 1, FloorBase), EDeadbrickVoxelMaterial::Concrete);
+    }
+
+    const int32 CenterX = (Min.X + Max.X) / 2;
+    const int32 CanopyZ = Min.Z + FMath::Max(7, FloorHeightVoxels * 3 / 4) + 2;
+    const int32 CanopyHalf = FMath::Clamp((Max.X - Min.X) / 10, 4, 8);
+    VoxelWorld->FillBox(
+        FIntVector(CenterX - CanopyHalf, Min.Y - 4, CanopyZ),
+        FIntVector(CenterX + CanopyHalf, Min.Y - 1, CanopyZ),
+        EDeadbrickVoxelMaterial::Metal);
+
+    // A sparse destructible fire escape/balcony breaks the silhouette and creates navigable rubble.
+    if (Max.Z - Min.Z >= FloorHeightVoxels * 2 && Stream.FRand() < 0.72f)
+    {
+        const int32 BalconyY0 = (Min.Y + Max.Y) / 2 - 4;
+        const int32 BalconyY1 = BalconyY0 + 8;
+        for (int32 FloorBase = Min.Z + FloorHeightVoxels; FloorBase < Max.Z; FloorBase += FloorHeightVoxels * 2)
+        {
+            const int32 PlatformZ = FloorBase + 2;
+            VoxelWorld->FillBox(
+                FIntVector(Max.X + 1, BalconyY0, PlatformZ),
+                FIntVector(Max.X + 5, BalconyY1, PlatformZ),
+                EDeadbrickVoxelMaterial::Metal);
+
+            VoxelWorld->FillBox(
+                FIntVector(Max.X + 5, BalconyY0, PlatformZ + 1),
+                FIntVector(Max.X + 5, BalconyY0, PlatformZ + 4),
+                EDeadbrickVoxelMaterial::Metal);
+            VoxelWorld->FillBox(
+                FIntVector(Max.X + 5, BalconyY1, PlatformZ + 1),
+                FIntVector(Max.X + 5, BalconyY1, PlatformZ + 4),
+                EDeadbrickVoxelMaterial::Metal);
+            VoxelWorld->FillBox(
+                FIntVector(Max.X + 5, BalconyY0, PlatformZ + 4),
+                FIntVector(Max.X + 5, BalconyY1, PlatformZ + 4),
+                EDeadbrickVoxelMaterial::Metal);
+        }
+    }
+}
+
+void AProceduralCityGenerator::BuildRoofDetails(const FIntVector& Min, const FIntVector& Max, FRandomStream& Stream)
+{
+    const int32 RoofZ = Max.Z + 1;
+
+    // Parapet perimeter.
+    VoxelWorld->FillBox(FIntVector(Min.X, Min.Y, RoofZ), FIntVector(Max.X, Min.Y, RoofZ + 2), EDeadbrickVoxelMaterial::Concrete);
+    VoxelWorld->FillBox(FIntVector(Min.X, Max.Y, RoofZ), FIntVector(Max.X, Max.Y, RoofZ + 2), EDeadbrickVoxelMaterial::Concrete);
+    VoxelWorld->FillBox(FIntVector(Min.X, Min.Y, RoofZ), FIntVector(Min.X, Max.Y, RoofZ + 2), EDeadbrickVoxelMaterial::Concrete);
+    VoxelWorld->FillBox(FIntVector(Max.X, Min.Y, RoofZ), FIntVector(Max.X, Max.Y, RoofZ + 2), EDeadbrickVoxelMaterial::Concrete);
+
+    const int32 MidX = (Min.X + Max.X) / 2;
+    const int32 MidY = (Min.Y + Max.Y) / 2;
+
+    // HVAC housings and vents are intentionally separate material islands attached to the roof so
+    // they can tear loose and become metal salvage during a collapse.
+    VoxelWorld->FillBox(
+        FIntVector(MidX - 5, MidY - 4, RoofZ),
+        FIntVector(MidX, MidY + 1, RoofZ + 4),
+        EDeadbrickVoxelMaterial::Metal);
+
+    if (Stream.FRand() < 0.75f)
+    {
+        VoxelWorld->FillBox(
+            FIntVector(MidX + 4, MidY + 3, RoofZ),
+            FIntVector(MidX + 7, MidY + 6, RoofZ + 3),
+            EDeadbrickVoxelMaterial::Metal);
+    }
+
+    VoxelWorld->FillBox(
+        FIntVector(MidX + 2, MidY - 5, RoofZ),
+        FIntVector(MidX + 2, MidY - 5, RoofZ + 7),
+        EDeadbrickVoxelMaterial::Metal);
+}
+
+void AProceduralCityGenerator::SpawnReferenceClutter(
+    const FIntVector& Min,
+    const FIntVector& Max,
+    int32 FloorHeightVoxels,
+    FRandomStream& Stream)
+{
+    if (!GetWorld() || !VoxelWorld) return;
+
+    const int32 MidX = (Min.X + Max.X) / 2;
+    const int32 MidY = (Min.Y + Max.Y) / 2;
+
+    if (UStaticMesh* Furniture = PickReferenceMesh(ReferenceFurnitureMeshes, Stream))
+    {
+        SpawnReferenceProp(
+            Furniture,
+            VoxelWorld->VoxelToWorld(FIntVector(MidX + 4, MidY + 4, Min.Z + 3)),
+            FRotator(0.0f, Stream.FRandRange(-180.0f, 180.0f), 0.0f),
+            FVector(95.0f, 85.0f, 100.0f),
+            EDeadbrickVoxelMaterial::Wood,
+            65.0f,
+            EDeadbrickReferencePropRole::Generic);
+
+        if (Max.Z >= FloorHeightVoxels * 2 && Stream.FRand() < 0.65f)
+        {
+            SpawnReferenceProp(
+                Furniture,
+                VoxelWorld->VoxelToWorld(FIntVector(MidX - 5, MidY + 3, Min.Z + FloorHeightVoxels + 3)),
+                FRotator(0.0f, Stream.FRandRange(-180.0f, 180.0f), 0.0f),
+                FVector(90.0f, 80.0f, 95.0f),
+                EDeadbrickVoxelMaterial::Wood,
+                65.0f,
+                EDeadbrickReferencePropRole::Generic);
+        }
+    }
+
+    if (UStaticMesh* Utility = PickReferenceMesh(ReferenceUtilityMeshes, Stream))
+    {
+        SpawnReferenceProp(
+            Utility,
+            VoxelWorld->VoxelToWorld(FIntVector(Max.X + 3, MidY - 5, Min.Z + 3)),
+            FRotator(0.0f, Stream.FRandRange(-35.0f, 35.0f), 0.0f),
+            FVector(90.0f, 90.0f, 120.0f),
+            EDeadbrickVoxelMaterial::Metal,
+            95.0f,
+            EDeadbrickReferencePropRole::Generic);
     }
 }
 
