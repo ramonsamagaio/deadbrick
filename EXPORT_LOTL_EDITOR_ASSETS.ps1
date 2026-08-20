@@ -69,6 +69,23 @@ function New-CommonArgs {
     return ,$CueArgs
 }
 
+function Invoke-Cue4ParseLogged($Arguments, [string]$LogPath) {
+    # Windows PowerShell 5.1 promotes native stderr lines to ErrorRecord objects. With the script-wide
+    # ErrorActionPreference=Stop that used to abort a perfectly valid CUE4Parse run merely because the
+    # exporter writes progress such as "Loading single pak" to stderr. Capture both streams while the
+    # native command is allowed to finish, then trust its real process exit code.
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $Cue4Parse @Arguments 2>&1 | ForEach-Object { $_.ToString() } | Add-Content $LogPath
+        $ExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
+    return $ExitCode
+}
+
 function Invoke-PatternExport([string]$Label, [string]$Pattern, [string[]]$ExtraArgs) {
     Write-Host "  $Label $Pattern" -ForegroundColor DarkCyan
     $CueArgs = New-CommonArgs
@@ -78,8 +95,7 @@ function Invoke-PatternExport([string]$Label, [string]$Pattern, [string[]]$Extra
     $CueArgs.Add('-p'); $CueArgs.Add($Pattern)
 
     "=== $Label $Pattern ===" | Add-Content $ExportLog
-    & $Cue4Parse @CueArgs 2>&1 | Add-Content $ExportLog
-    return $LASTEXITCODE
+    return Invoke-Cue4ParseLogged $CueArgs $ExportLog
 }
 
 Install-Cue4Parse
@@ -137,7 +153,7 @@ foreach ($Pattern in $AllPatterns) {
     $CueArgs.Add('-p'); $CueArgs.Add($Pattern)
     $CueArgs.Add('-l')
     "=== $Pattern ===" | Add-Content $PackageListLog
-    & $Cue4Parse @CueArgs 2>&1 | Add-Content $PackageListLog
+    [void](Invoke-Cue4ParseLogged $CueArgs $PackageListLog)
 }
 Write-Host "Package inventory: $PackageListLog" -ForegroundColor DarkGray
 
