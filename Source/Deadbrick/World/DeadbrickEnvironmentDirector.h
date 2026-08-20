@@ -49,6 +49,7 @@ private:
 
     bool bInitialized = false;
 
+    void DisablePreexistingEnvironment();
     void ConfigureLightingAndGrade();
     void ConfigureInstanceMaterials();
     void PopulateStreetDressing(AProceduralCityGenerator* CityGenerator, ADestructibleVoxelWorld* VoxelWorld);
