@@ -68,9 +68,13 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
     VoxelWorld->bEnableStructuralGravity = true;
     VoxelWorld->bSpawnSalvageDrops = true;
     VoxelWorld->MaxPhysicsIslandVoxels = 24;
-    VoxelWorld->MaxPhysicsBodiesPerCollapse = 192;
-    VoxelWorld->PhysicsIslandBuildBudgetPerFrame = 4;
-    VoxelWorld->StructuralWorkBudgetPerFrame = 6144;
+
+    // Interactive destruction is intentionally amortized. Rebuilding a 32^3 procedural chunk and
+    // scanning thousands of support voxels in the same shot frame was the main CPU hitch candidate.
+    VoxelWorld->MaxPhysicsBodiesPerCollapse = 128;
+    VoxelWorld->PhysicsIslandBuildBudgetPerFrame = 2;
+    VoxelWorld->StructuralWorkBudgetPerFrame = 1024;
+    VoxelWorld->ChunkRebuildBudgetPerFrame = 1;
     VoxelWorld->SupportCapacityPerGroundVoxel = 320.0f;
 
     AProceduralCityGenerator* CityGenerator = World->SpawnActor<AProceduralCityGenerator>(
@@ -86,9 +90,6 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
     CityGenerator->VoxelWorld = VoxelWorld;
     CityGenerator->Seed = 1337;
 
-    // Four full blocks instead of the previous single 24 m test lot. This is deliberately still a
-    // bounded vertical slice while the naive chunk mesher is being replaced, but it is large enough to
-    // test streets, mixed building heights, scavenging and zombie movement as an actual neighborhood.
     CityGenerator->BlocksPerAxis = 2;
     CityGenerator->BlockSizeMeters = 32.0f;
     CityGenerator->StreetWidthMeters = 10.0f;
@@ -96,16 +97,12 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
     CityGenerator->GenerateCity();
     CityGenerator->ImproveTraversalAndStreetLife();
 
-    // Environment is generated after city geometry so its dressing can use the exact procedural block
-    // spacing. It is an independent actor, so the same atmosphere pass can follow streamed districts later.
     if (ADeadbrickEnvironmentDirector* Environment = World->SpawnActor<ADeadbrickEnvironmentDirector>(
         ADeadbrickEnvironmentDirector::StaticClass(), PrototypeOrigin, FRotator::ZeroRotator, SpawnParams))
     {
         Environment->InitializeForCity(CityGenerator, VoxelWorld);
     }
 
-    // Keep a guaranteed empty spawn column above the first road intersection. The road cell at Z=0
-    // remains intact, while any accidental generated geometry around the capsule/camera is removed.
     const FIntVector SpawnVoxel = VoxelWorld->WorldToVoxel(PrototypeOrigin + FVector(400.0f, 400.0f, 240.0f));
     VoxelWorld->BeginBulkEdit();
     for (int32 Z = 1; Z <= 28; ++Z)
@@ -114,15 +111,13 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
         VoxelWorld->SetVoxel(FIntVector(SpawnVoxel.X + X, SpawnVoxel.Y + Y, Z), EDeadbrickVoxelMaterial::Air, 0);
     VoxelWorld->EndBulkEdit();
 
-    // Everything before this point is deterministic baseline generation. Only gameplay changes after it
-    // become save deltas, so saves stay tiny even when the city eventually spans many streamed districts.
     VoxelWorld->StartRuntimePersistence();
 
     if (UDeadbrickPhysXSubsystem* PhysX = World->GetSubsystem<UDeadbrickPhysXSubsystem>())
         PhysX->SetGroundHeight(PrototypeOrigin.Z + VoxelWorld->VoxelSizeCm);
 
     SpawnPrototypeZombies();
-    ShowStatus(TEXT("Expanded district ready: destructible interiors, scavenging, atmospheric lighting, local haze and instanced street dressing are active."), FColor::Green);
+    ShowStatus(TEXT("Expanded district ready: balanced atmosphere, destructible interiors, scavenging and amortized destruction are active."), FColor::Green);
 }
 
 void UDeadbrickRuntimeBootstrapSubsystem::EnsurePlayer()
