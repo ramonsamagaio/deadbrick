@@ -17,6 +17,11 @@ $PhysXRepository = "https://github.com/NVIDIA-Omniverse/PhysX.git"
 $PhysXTag = "110.0-omni-and-physx-5.8.0"
 $PresetName = "vc17win64-cpu-only"
 
+# Keep the bootstrap independent from optional Visual Studio components. CMake 3.31.x is new enough
+# for PhysX 5.8 but avoids future CMake 4.x policy breakage in NVIDIA's project generator.
+$PortableCMakeVersion = "3.31.10"
+$PortableToolsRoot = Join-Path $ProjectRoot "Tools\cmake"
+
 $RequiredLibs = @(
     "PhysX_64.lib",
     "PhysXCommon_64.lib",
@@ -45,6 +50,56 @@ function Find-Executable([string]$Name, [string[]]$Candidates) {
     return $null
 }
 
+function Find-VisualStudioCMake {
+    $VsWhereCandidates = @(
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe",
+        "$env:ProgramFiles\Microsoft Visual Studio\Installer\vswhere.exe"
+    ) | Where-Object { $_ -and (Test-Path $_) }
+
+    foreach ($VsWhere in $VsWhereCandidates) {
+        $InstallPath = (& $VsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null | Select-Object -First 1)
+        if (-not [string]::IsNullOrWhiteSpace($InstallPath)) {
+            $Candidate = Join-Path $InstallPath "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+            if (Test-Path $Candidate) { return $Candidate }
+        }
+    }
+    return $null
+}
+
+function Install-PortableCMake {
+    $Existing = Get-ChildItem $PortableToolsRoot -Recurse -Filter "cmake.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($Existing) { return $Existing.FullName }
+
+    Write-Host "CMake was not installed. Downloading portable Kitware CMake $PortableCMakeVersion..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Path $PortableToolsRoot -Force | Out-Null
+
+    $ZipName = "cmake-$PortableCMakeVersion-windows-x86_64.zip"
+    $BaseUrl = "https://github.com/Kitware/CMake/releases/download/v$PortableCMakeVersion"
+    $ZipPath = Join-Path $PortableToolsRoot $ZipName
+    $ShaPath = Join-Path $PortableToolsRoot "cmake-$PortableCMakeVersion-SHA-256.txt"
+    $Headers = @{ "User-Agent" = "DEADBRICK-PhysX-bootstrap" }
+
+    Invoke-WebRequest -Headers $Headers -Uri "$BaseUrl/$ZipName" -OutFile $ZipPath
+    Invoke-WebRequest -Headers $Headers -Uri "$BaseUrl/cmake-$PortableCMakeVersion-SHA-256.txt" -OutFile $ShaPath
+
+    $ExpectedLine = Get-Content $ShaPath | Where-Object { $_ -match [regex]::Escape($ZipName) } | Select-Object -First 1
+    if (-not $ExpectedLine) { throw "Could not verify the downloaded CMake archive: SHA-256 entry is missing." }
+    $ExpectedHash = (($ExpectedLine.Trim() -split '\s+')[0]).ToUpperInvariant()
+    $ActualHash = (Get-FileHash -Algorithm SHA256 -Path $ZipPath).Hash.ToUpperInvariant()
+    if ($ExpectedHash -ne $ActualHash) {
+        Remove-Item $ZipPath -Force -ErrorAction SilentlyContinue
+        throw "Portable CMake checksum mismatch. Download was discarded."
+    }
+
+    Expand-Archive -Path $ZipPath -DestinationPath $PortableToolsRoot -Force
+    Remove-Item $ZipPath,$ShaPath -Force -ErrorAction SilentlyContinue
+
+    $Found = Get-ChildItem $PortableToolsRoot -Recurse -Filter "cmake.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $Found) { throw "Portable CMake archive was extracted but cmake.exe was not found." }
+    Write-Host "Portable CMake ready: $($Found.FullName)" -ForegroundColor Green
+    return $Found.FullName
+}
+
 function Find-BuiltFile([string]$Name) {
     $Matches = @(Get-ChildItem $SourceRoot -Recurse -File -Filter $Name -ErrorAction SilentlyContinue)
     if ($Matches.Count -eq 0) { return $null }
@@ -68,23 +123,35 @@ if ((Test-SdkReady) -and -not $Force) {
 
 $Git = Find-Executable "git.exe" @(
     "$env:ProgramFiles\Git\cmd\git.exe",
-    "$env:ProgramFiles\Git\bin\git.exe"
+    "$env:ProgramFiles\Git\bin\git.exe",
+    "$env:LOCALAPPDATA\GitHubDesktop\app-*\resources\app\git\cmd\git.exe"
 )
+
 $CMake = Find-Executable "cmake.exe" @(
     "$env:ProgramFiles\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
     "$env:ProgramFiles\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
     "$env:ProgramFiles\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
     "$env:ProgramFiles\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 )
+if (-not $CMake) { $CMake = Find-VisualStudioCMake }
+if (-not $CMake) { $CMake = Install-PortableCMake }
+
+$UE58Python = Join-Path "C:\Program Files\Epic Games\UE_5.8" "Engine\Binaries\ThirdParty\Python3\Win64\python.exe"
 $Python = Find-Executable "python.exe" @(
+    $UE58Python,
+    "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe",
     "$env:LOCALAPPDATA\Programs\Python\Python313\python.exe",
     "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
     "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe"
 )
 
-if (-not $Git) { throw "Git was not found. Install Git for Windows or add git.exe to PATH." }
-if (-not $CMake) { throw "CMake was not found. Visual Studio 2022's CMake component is sufficient." }
-if (-not $Python) { throw "Python was not found. PhysX project generation requires Python." }
+if (-not $Git) { throw "Git was not found. Git for Windows or GitHub Desktop is required." }
+if (-not $CMake) { throw "CMake bootstrap failed unexpectedly." }
+if (-not $Python) { throw "Python was not found. UE 5.8's bundled Python or a normal Python installation is required." }
+
+Write-Host "Git   : $Git" -ForegroundColor DarkGray
+Write-Host "CMake : $CMake" -ForegroundColor DarkGray
+Write-Host "Python: $Python" -ForegroundColor DarkGray
 
 $env:PATH = "$(Split-Path -Parent $CMake);$(Split-Path -Parent $Python);$env:PATH"
 New-Item -ItemType Directory -Path $ThirdPartyRoot -Force | Out-Null
@@ -160,6 +227,8 @@ if (-not (Test-SdkReady)) { throw "PhysX build finished but normalized SDK valid
     "Preset: $PresetName",
     "Configuration: checked",
     "CRT: dynamic MSVC",
+    "CMake: $CMake",
+    "Python: $Python",
     "SDK: $SdkRoot"
 ) | Set-Content $Marker -Encoding UTF8
 
