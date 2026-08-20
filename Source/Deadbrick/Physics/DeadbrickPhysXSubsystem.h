@@ -18,8 +18,6 @@ public:
 
     bool IsPhysXReady() const { return bPhysXReady; }
 
-    // Creates a PhysX-owned dynamic box. VisualActor is kept non-simulating in Chaos and is
-    // synchronized from the PhysX pose every fixed step. LocalCenter is relative to VisualActor.
     int64 CreateDynamicBox(
         AActor* VisualActor,
         const FVector& LocalCenter,
@@ -29,6 +27,7 @@ public:
         float AngularDamping = 0.25f);
 
     void DestroyBody(int64 Handle);
+    void AddImpulse(int64 Handle, const FVector& Impulse);
     void SetGroundHeight(float GroundHeightCm);
 
 private:
