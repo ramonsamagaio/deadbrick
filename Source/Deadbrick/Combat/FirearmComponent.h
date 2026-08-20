@@ -4,6 +4,9 @@
 #include "Components/ActorComponent.h"
 #include "FirearmComponent.generated.h"
 
+class UPointLightComponent;
+class UStaticMeshComponent;
+
 USTRUCT(BlueprintType)
 struct FDeadbrickFirearmStats
 {
@@ -38,6 +41,24 @@ public:
     UFUNCTION(BlueprintCallable, Category="Firearm") bool FireFromCamera(const FVector& Origin, const FVector& Direction);
     UFUNCTION(BlueprintCallable, Category="Firearm") void Reload();
 
+protected:
+    virtual void BeginPlay() override;
+
 private:
     double LastShotTime = -1000.0;
+
+    UPROPERTY(Transient) TObjectPtr<UStaticMeshComponent> WeaponStock;
+    UPROPERTY(Transient) TObjectPtr<UStaticMeshComponent> WeaponBarrel;
+    UPROPERTY(Transient) TObjectPtr<UStaticMeshComponent> WeaponGrip;
+    UPROPERTY(Transient) TObjectPtr<UStaticMeshComponent> WeaponMagazine;
+    UPROPERTY(Transient) TObjectPtr<UStaticMeshComponent> WeaponSight;
+    UPROPERTY(Transient) TObjectPtr<UPointLightComponent> MuzzleFlashLight;
+
+    FTimerHandle FirePresentationTimer;
+    FVector BaseViewModelLocation = FVector::ZeroVector;
+    bool bPresentationBuilt = false;
+
+    void BuildFallbackWeaponPresentation();
+    void PlayFirePresentation();
+    void ResetFirePresentation();
 };
