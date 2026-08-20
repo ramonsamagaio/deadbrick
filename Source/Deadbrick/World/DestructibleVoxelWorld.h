@@ -30,20 +30,21 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="4096", ClampMax="524288"))
     int32 MaxStructuralScanVoxels = 262144;
 
-    // Detached structures are partitioned into small contiguous rubble clusters instead of long
-    // building-sized slabs. 48 ten-centimetre cells is the visual/interaction target; very large
-    // collapses automatically raise the effective target just enough to stay under the body cap.
+    // Preferred amount of source voxel material represented by one falling rubble piece. Large
+    // structures may raise the effective target just enough to respect the body safety ceiling.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="8", ClampMax="512"))
     int32 MaxPhysicsIslandVoxels = 48;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="4096", ClampMax="524288"))
     int32 MaxDetachedComponentVoxels = 262144;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="1", ClampMax="128"))
-    int32 MaxPhysicsBodiesPerCollapse = 64;
+    // Simple PhysX boxes are cheap enough to carry many local rubble pieces. A higher ceiling keeps
+    // the visual result granular while preparation remains amortized over several render frames.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Physics", meta=(ClampMin="1", ClampMax="256"))
+    int32 MaxPhysicsBodiesPerCollapse = 128;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="1", ClampMax="8"))
-    int32 PhysicsIslandBuildBudgetPerFrame = 2;
+    int32 PhysicsIslandBuildBudgetPerFrame = 3;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel|Performance", meta=(ClampMin="256", ClampMax="32768"))
     int32 StructuralWorkBudgetPerFrame = 4096;
