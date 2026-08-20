@@ -48,31 +48,39 @@ if not errorlevel 1 (
 )
 
 rem PhysX 5.8 is isolated behind a plain-C bridge because UE 5.8's Chaos compatibility headers still
-rem reserve legacy physx::PxQuat/PxTransform names. Both the NVIDIA runtime and the bridge are required.
-set "NEED_PHYSX_SETUP=0"
-if not exist "%PHYSX_DLL%" set "NEED_PHYSX_SETUP=1"
-if not exist "%PHYSX_BRIDGE%" set "NEED_PHYSX_SETUP=1"
+rem reserve legacy physx::PxQuat/PxTransform names. Rebuild the tiny bridge every run so a pulled bridge
+rem source change can never leave an old local .lib linked into a fresh Unreal DLL. The NVIDIA SDK itself
+rem remains cached and is NOT rebuilt when already present.
+if not exist "%PHYSX_SETUP%" (
+    echo ERROR: SETUP_PHYSX5_UE58.ps1 is missing.
+    pause
+    exit /b 10
+)
 
-if "%NEED_PHYSX_SETUP%"=="1" (
+if exist "%PHYSX_BRIDGE%" del /Q "%PHYSX_BRIDGE%" >NUL 2>NUL
+
+echo.
+echo [1/6] Preparing PhysX 5.8 SDK + fresh isolation bridge...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PHYSX_SETUP%"
+if errorlevel 1 (
     echo.
-    echo [1/6] PhysX 5.8 SDK or isolation bridge missing. Preparing native backend...
-    if not exist "%PHYSX_SETUP%" (
-        echo ERROR: SETUP_PHYSX5_UE58.ps1 is missing.
-        pause
-        exit /b 10
-    )
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%PHYSX_SETUP%"
-    if errorlevel 1 (
-        echo.
-        echo ============================================================
-        echo PHYSX 5.8 SETUP FAILED. BUILD ABORTED.
-        echo The voxel collapse backend will NOT silently fall back here.
-        echo ============================================================
-        pause
-        exit /b 10
-    )
-) else (
-    echo [1/6] PhysX 5.8 SDK + isolation bridge ready.
+    echo ============================================================
+    echo PHYSX 5.8 SETUP FAILED. BUILD ABORTED.
+    echo The voxel collapse backend will NOT silently fall back here.
+    echo ============================================================
+    pause
+    exit /b 10
+)
+
+if not exist "%PHYSX_DLL%" (
+    echo ERROR: PhysX runtime DLL is still missing after setup.
+    pause
+    exit /b 10
+)
+if not exist "%PHYSX_BRIDGE%" (
+    echo ERROR: DeadbrickPhysXBridge.lib is still missing after setup.
+    pause
+    exit /b 10
 )
 
 rem CUE4Parse exports LOTL skeletal assets as PSK/PSA. Install and patch the ActorX importer before
