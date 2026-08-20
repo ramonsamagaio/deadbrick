@@ -73,8 +73,11 @@ AVoxelPhysicsIsland::AVoxelPhysicsIsland()
     MeshComponent->SetCollisionObjectType(ECC_PhysicsBody);
     MeshComponent->SetCollisionResponseToAllChannels(ECR_Block);
     MeshComponent->SetCanEverAffectNavigation(false);
-    MeshComponent->SetLinearDamping(0.08f);
-    MeshComponent->SetAngularDamping(0.25f);
+
+    // Rubble should lose energy and pile up. Low damping was one reason structural failure read like an
+    // explosion instead of a collapse, especially when several newly detached bodies touched at once.
+    MeshComponent->SetLinearDamping(0.45f);
+    MeshComponent->SetAngularDamping(0.78f);
     MeshComponent->SetNotifyRigidBodyCollision(true);
 }
 
@@ -270,8 +273,8 @@ void AVoxelPhysicsIsland::ActivatePhysics()
                     PreparedLocalCenter,
                     PreparedHalfExtents,
                     PreparedMassKg,
-                    0.12f,
-                    0.32f);
+                    0.45f,
+                    0.78f);
 
                 if (PhysXBodyHandle != INDEX_NONE)
                 {
@@ -290,7 +293,7 @@ void AVoxelPhysicsIsland::ActivatePhysics()
     bUsingPhysX = false;
     MeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     MeshComponent->SetUseCCD(true, NAME_None);
-    MeshComponent->SetMaxDepenetrationVelocity(NAME_None, 1000.0f);
+    MeshComponent->SetMaxDepenetrationVelocity(NAME_None, 450.0f);
     MeshComponent->SetSimulatePhysics(true);
     MeshComponent->SetEnableGravity(true);
     MeshComponent->SetMassOverrideInKg(NAME_None, PreparedMassKg, true);
@@ -336,9 +339,10 @@ float AVoxelPhysicsIsland::TakeDamage(
         ImpulseDirection = PointEvent.ShotDirection.GetSafeNormal();
     }
 
+    // Shooting rubble should chip/push it, not launch a concrete block across the street.
     if (!ImpulseDirection.IsNearlyZero())
     {
-        const float ImpulseMagnitude = FMath::Clamp(AppliedDamage * 220.0f, 1800.0f, 16000.0f);
+        const float ImpulseMagnitude = FMath::Clamp(AppliedDamage * 65.0f, 450.0f, 4200.0f);
         ApplyGameplayImpulse(ImpulseDirection * ImpulseMagnitude);
     }
 
@@ -367,8 +371,8 @@ void AVoxelPhysicsIsland::NotifyHit(
     PushVelocity.Z = 0.0f;
     if (PushVelocity.SizeSquared() < FMath::Square(35.0f)) return;
 
-    const float MassFactor = FMath::Clamp(PreparedMassKg * 0.12f, 12.0f, 80.0f);
-    ApplyGameplayImpulse(PushVelocity.GetClampedToMaxSize(850.0f) * MassFactor);
+    const float MassFactor = FMath::Clamp(PreparedMassKg * 0.035f, 4.0f, 22.0f);
+    ApplyGameplayImpulse(PushVelocity.GetClampedToMaxSize(650.0f) * MassFactor);
 }
 
 void AVoxelPhysicsIsland::BreakIntoSalvage()
