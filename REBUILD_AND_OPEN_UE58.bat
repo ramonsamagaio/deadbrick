@@ -15,7 +15,8 @@ set "REFERENCE_EXPORT=%PROJECT_DIR%ReferenceExported"
 set "REFERENCE_EXPORT_SCRIPT=%PROJECT_DIR%EXPORT_LOTL_EDITOR_ASSETS.ps1"
 set "REFERENCE_IMPORT_SCRIPT=%PROJECT_DIR%Tools\import_lotl_reference.py"
 set "LOTL_LEGACY_PAK=%PROJECT_DIR%ReferenceExtracted\Legacy\LayOfTheLand_Legacy.pak"
-set "PHYSX_DLL=%PROJECT_DIR%ThirdParty\PhysX5\SDK\bin\Win64\PhysX_64.dll"
+set "PHYSX_BIN_DIR=%PROJECT_DIR%ThirdParty\PhysX5\SDK\bin\Win64"
+set "PHYSX_DLL=%PHYSX_BIN_DIR%\PhysX_64.dll"
 set "PHYSX_BRIDGE=%PROJECT_DIR%ThirdParty\PhysX5\SDK\lib\Win64\DeadbrickPhysXBridge.lib"
 set "ACTORX_PLUGIN=%PROJECT_DIR%Plugins\UnrealPSKPSA\UnrealPSKPSA.uplugin"
 
@@ -197,6 +198,25 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+
+rem PIE executes inside UnrealEditor.exe. RuntimeDependencies are staging metadata and do not guarantee
+rem Windows delay-load lookup during editor play. Stage all three native DLLs beside the DEADBRICK module
+rem as a second safety net; the subsystem also loads them by absolute SDK path before DBPX_CreateScene.
+if not exist "%PROJECT_DIR%Binaries\Win64" mkdir "%PROJECT_DIR%Binaries\Win64"
+for %%D in (PhysXFoundation_64.dll PhysXCommon_64.dll PhysX_64.dll) do (
+    if not exist "%PHYSX_BIN_DIR%\%%D" (
+        echo ERROR: PhysX runtime DLL missing after build: %PHYSX_BIN_DIR%\%%D
+        pause
+        exit /b 12
+    )
+    copy /Y "%PHYSX_BIN_DIR%\%%D" "%PROJECT_DIR%Binaries\Win64\%%D" >NUL
+    if errorlevel 1 (
+        echo ERROR: Failed to stage %%D into Binaries\Win64.
+        pause
+        exit /b 12
+    )
+)
+echo PhysX runtime DLLs staged for PIE in Binaries\Win64.
 
 set "HAS_REFERENCE_EXPORT=0"
 if exist "%REFERENCE_EXPORT%" (
