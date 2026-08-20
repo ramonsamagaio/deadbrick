@@ -42,24 +42,28 @@ namespace
         static constexpr int32 MaxSubstepsPerFrame = 4;
     };
 
+    // Unreal uses X-forward/Y-right/Z-up with a left-handed convention. Keep PhysX in an explicit
+    // right-handed mirror by negating Y. Quaternion vector parts are axial, so the matching basis
+    // reflection is (-X, +Y, -Z, W). This prevents angular motion from rendering mirrored in UE.
     static PxVec3 ToPxVector(const FVector& V)
     {
-        return PxVec3((PxReal)V.X, (PxReal)V.Y, (PxReal)V.Z);
+        return PxVec3((PxReal)V.X, (PxReal)-V.Y, (PxReal)V.Z);
     }
 
     static FVector ToUnrealVector(const PxVec3& V)
     {
-        return FVector((double)V.x, (double)V.y, (double)V.z);
+        return FVector((double)V.x, (double)-V.y, (double)V.z);
     }
 
     static PxQuat ToPxQuat(const FQuat& Q)
     {
-        return PxQuat((PxReal)Q.X, (PxReal)Q.Y, (PxReal)Q.Z, (PxReal)Q.W);
+        const FQuat N = Q.GetNormalized();
+        return PxQuat((PxReal)-N.X, (PxReal)N.Y, (PxReal)-N.Z, (PxReal)N.W);
     }
 
     static FQuat ToUnrealQuat(const PxQuat& Q)
     {
-        return FQuat((double)Q.x, (double)Q.y, (double)Q.z, (double)Q.w).GetNormalized();
+        return FQuat((double)-Q.x, (double)Q.y, (double)-Q.z, (double)Q.w).GetNormalized();
     }
 
     static void ReleaseGround(FDeadbrickPhysXState& State)
@@ -127,8 +131,8 @@ void UDeadbrickPhysXSubsystem::Initialize(FSubsystemCollectionBase& Collection)
     }
 
     PxTolerancesScale Scale;
-    Scale.length = 100.0f;   // Unreal unit: centimetre.
-    Scale.speed = 1000.0f;   // Roughly ten metres per second in centimetres.
+    Scale.length = 100.0f;
+    Scale.speed = 1000.0f;
 
     State->Physics = PxCreatePhysics(PX_PHYSICS_VERSION, *State->Foundation, Scale, false, nullptr);
     if (!State->Physics)
@@ -223,7 +227,6 @@ void UDeadbrickPhysXSubsystem::Tick(float DeltaTime)
         ++Steps;
     }
 
-    // Do not let a long hitch create a physics death spiral on the next frame.
     if (Steps == FDeadbrickPhysXState::MaxSubstepsPerFrame)
         State->Accumulator = FMath::Min(State->Accumulator, FDeadbrickPhysXState::FixedStepSeconds);
 
