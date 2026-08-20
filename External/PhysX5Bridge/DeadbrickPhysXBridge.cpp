@@ -3,6 +3,7 @@
 #include "PxPhysicsAPI.h"
 #include "extensions/PxDefaultCpuDispatcher.h"
 #include "extensions/PxDefaultSimulationFilterShader.h"
+#include "extensions/PxExtensionsAPI.h"
 
 #include <algorithm>
 #include <unordered_map>
@@ -22,6 +23,7 @@ struct DBPXScene
     std::unordered_map<int64_t, PxRigidDynamic*> Bodies;
     int64_t NextHandle = 1;
     float Accumulator = 0.0f;
+    bool ExtensionsInitialized = false;
 };
 
 namespace
@@ -105,9 +107,14 @@ namespace
         State->Bodies.clear();
 
         ReleaseGround(*State);
-        if (State->Material) { State->Material->release(); State->Material = nullptr; }
         if (State->Scene) { State->Scene->release(); State->Scene = nullptr; }
+        if (State->Material) { State->Material->release(); State->Material = nullptr; }
         if (State->Dispatcher) { State->Dispatcher->release(); State->Dispatcher = nullptr; }
+        if (State->ExtensionsInitialized)
+        {
+            PxCloseExtensions();
+            State->ExtensionsInitialized = false;
+        }
         if (State->Physics) { State->Physics->release(); State->Physics = nullptr; }
         if (State->Foundation) { State->Foundation->release(); State->Foundation = nullptr; }
         delete State;
@@ -135,6 +142,13 @@ extern "C" DBPXScene* DBPX_CreateScene(float GroundHeightCm)
         DestroyState(State);
         return nullptr;
     }
+
+    if (!PxInitExtensions(*State->Physics, nullptr))
+    {
+        DestroyState(State);
+        return nullptr;
+    }
+    State->ExtensionsInitialized = true;
 
     PxSceneDesc SceneDesc(State->Physics->getTolerancesScale());
     SceneDesc.gravity = PxVec3(0.0f, 0.0f, -980.665f);
