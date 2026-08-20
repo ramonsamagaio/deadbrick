@@ -7,7 +7,7 @@ public:
     virtual void StartupModule() override
     {
         FDefaultGameModuleImpl::StartupModule();
-        UE_LOG(LogTemp, Display, TEXT("DEADBRICK MODULE BUILD 2026-08-20-P PHYSX5-PIE-DLL-LOADFIX LOADED"));
+        UE_LOG(LogTemp, Display, TEXT("DEADBRICK MODULE BUILD 2026-08-20-Q INTERACTIVE-RUBBLE-IMMERSIVE-CITY LOADED"));
     }
 };
 
