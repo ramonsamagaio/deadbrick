@@ -47,8 +47,6 @@ void UFirearmComponent::BuildFallbackWeaponPresentation()
     BaseViewModelLocation = Character->ViewModelRoot->GetRelativeLocation();
     BaseViewModelRotation = Character->ViewModelRoot->GetRelativeRotation();
 
-    // Compact improvised rifle silhouette. Reference weapon meshes can still replace the receiver,
-    // while these pieces keep the first-person view readable before imported art is available.
     Character->ViewWeapon->SetStaticMesh(Cube);
     Character->ViewWeapon->SetRelativeLocation(FVector(49.0f, 13.0f, -21.0f));
     Character->ViewWeapon->SetRelativeScale3D(FVector(0.27f, 0.055f, 0.075f));
@@ -109,10 +107,12 @@ void UFirearmComponent::BuildFallbackWeaponPresentation()
         MuzzleFlashLight->SetupAttachment(Character->ViewModelRoot);
         MuzzleFlashLight->SetMobility(EComponentMobility::Movable);
         MuzzleFlashLight->SetIntensity(0.0f);
-        MuzzleFlashLight->SetAttenuationRadius(260.0f);
+        MuzzleFlashLight->SetAttenuationRadius(180.0f);
         MuzzleFlashLight->SetLightColor(FLinearColor(1.0f, 0.40f, 0.075f));
         MuzzleFlashLight->SetCastShadows(false);
-        MuzzleFlashLight->VolumetricScatteringIntensity = 2.2f;
+        // Do not inject every muzzle flash into the volumetric fog grid. That transient light update
+        // was a measurable candidate for the small GPU hitch reported exactly on the shot frame.
+        MuzzleFlashLight->VolumetricScatteringIntensity = 0.0f;
         MuzzleFlashLight->RegisterComponent();
         MuzzleFlashLight->SetRelativeLocation(FVector(94.0f, 13.0f, -20.0f));
     }
@@ -167,7 +167,7 @@ void UFirearmComponent::UpdateWeaponPresentation(float DeltaTime)
 
     MuzzleFlashAlpha = FMath::FInterpTo(MuzzleFlashAlpha, 0.0f, DeltaTime, 42.0f);
     if (MuzzleFlashLight)
-        MuzzleFlashLight->SetIntensity(11000.0f * MuzzleFlashAlpha);
+        MuzzleFlashLight->SetIntensity(5200.0f * MuzzleFlashAlpha);
 }
 
 bool UFirearmComponent::FireFromCamera(const FVector& Origin, const FVector& Direction)
