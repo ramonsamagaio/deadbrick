@@ -128,12 +128,12 @@ if exist "%REFERENCE_EXPORT%" (
 
 rem Older DEADBRICK exports only contained GLTF/textures. If the local LOTL pak exists but PSK or PSA
 rem is absent, regenerate now so player/enemy skins and original animation sequences actually enter UE.
-if exist "%LOTL_LEGACY_PAK%" if exist "%REFERENCE_EXPORT_SCRIPT%" (
-    if "%HAS_LOTL_PSK%"=="0" goto :export_lotl
-    if "%HAS_LOTL_PSA%"=="0" goto :export_lotl
-    goto :export_done
+set "NEED_LOTL_EXPORT=0"
+if "%HAS_REFERENCE_EXPORT%"=="0" set "NEED_LOTL_EXPORT=1"
+if "%HAS_LOTL_PSK%"=="0" set "NEED_LOTL_EXPORT=1"
+if "%HAS_LOTL_PSA%"=="0" set "NEED_LOTL_EXPORT=1"
 
-    :export_lotl
+if "%NEED_LOTL_EXPORT%"=="1" if exist "%LOTL_LEGACY_PAK%" if exist "%REFERENCE_EXPORT_SCRIPT%" (
     echo.
     echo [3/5] Exporting full LOTL asset families: GLTF + PSK + PSA + textures + metadata...
     powershell -NoProfile -ExecutionPolicy Bypass -File "%REFERENCE_EXPORT_SCRIPT%" -LegacyPak "%LOTL_LEGACY_PAK%"
@@ -142,10 +142,12 @@ if exist "%LOTL_LEGACY_PAK%" if exist "%REFERENCE_EXPORT_SCRIPT%" (
         echo Check ReferenceExtracted\Logs\cue4parse_priority_export.txt.
         echo Build continues so recovered families can still be imported.
     )
-    :export_done
 ) else (
-    echo.
-    echo [3/5] No local LOTL legacy pak found. Existing exported assets, if any, will be used.
+    if "%NEED_LOTL_EXPORT%"=="0" (
+        echo [3/5] Full LOTL export already contains skeletal meshes and animations.
+    ) else (
+        echo [3/5] No local LOTL legacy pak found. Existing exported assets, if any, will be used.
+    )
 )
 
 echo.
