@@ -52,10 +52,22 @@ private:
     float AnimationLockTimer = 0.0f;
     float FallbackAnimTime = 0.0f;
 
+    // Per-zombie gait values make a group read as damaged people instead of synchronized mannequins.
+    float GaitFrequency = 5.8f;
+    float GaitStride = 1.0f;
+    float GaitPhaseOffset = 0.0f;
+    float LimpBias = 0.0f;
+    float ShoulderBias = 0.0f;
+    float AttackPoseAlpha = 0.0f;
+    float FallbackHitReact = 0.0f;
+    float FallbackDeathTime = 0.0f;
+
     void AcquireTarget();
     void TryApplyReferenceVisuals();
     void UpdateReferenceAnimation();
     void UpdateFallbackAnimation(float DeltaSeconds);
+    void UpdateFallbackDeath(float DeltaSeconds);
     void SetFallbackVisible(bool bVisible);
+    void ApplyFallbackZombieMaterials();
     void PlayReferenceAnimation(UAnimSequence* Animation, bool bLoop, float LockSeconds = 0.0f);
 };
