@@ -16,6 +16,7 @@ set "REFERENCE_EXPORT_SCRIPT=%PROJECT_DIR%EXPORT_LOTL_EDITOR_ASSETS.ps1"
 set "REFERENCE_IMPORT_SCRIPT=%PROJECT_DIR%Tools\import_lotl_reference.py"
 set "LOTL_LEGACY_PAK=%PROJECT_DIR%ReferenceExtracted\Legacy\LayOfTheLand_Legacy.pak"
 set "PHYSX_DLL=%PROJECT_DIR%ThirdParty\PhysX5\SDK\bin\Win64\PhysX_64.dll"
+set "PHYSX_BRIDGE=%PROJECT_DIR%ThirdParty\PhysX5\SDK\lib\Win64\DeadbrickPhysXBridge.lib"
 set "ACTORX_PLUGIN=%PROJECT_DIR%Plugins\UnrealPSKPSA\UnrealPSKPSA.uplugin"
 
 echo ============================================================
@@ -46,11 +47,15 @@ if not errorlevel 1 (
     exit /b 1
 )
 
-rem PhysX is now a required runtime for DEADBRICK voxel collapse. Do not silently compile a Chaos
-rem build when the SDK is missing: install the pinned official 5.8 SDK first and fail loudly on error.
-if not exist "%PHYSX_DLL%" (
+rem PhysX 5.8 is isolated behind a plain-C bridge because UE 5.8's Chaos compatibility headers still
+rem reserve legacy physx::PxQuat/PxTransform names. Both the NVIDIA runtime and the bridge are required.
+set "NEED_PHYSX_SETUP=0"
+if not exist "%PHYSX_DLL%" set "NEED_PHYSX_SETUP=1"
+if not exist "%PHYSX_BRIDGE%" set "NEED_PHYSX_SETUP=1"
+
+if "%NEED_PHYSX_SETUP%"=="1" (
     echo.
-    echo [1/6] PhysX 5.8 SDK missing. Bootstrapping the pinned NVIDIA SDK...
+    echo [1/6] PhysX 5.8 SDK or isolation bridge missing. Preparing native backend...
     if not exist "%PHYSX_SETUP%" (
         echo ERROR: SETUP_PHYSX5_UE58.ps1 is missing.
         pause
@@ -67,7 +72,7 @@ if not exist "%PHYSX_DLL%" (
         exit /b 10
     )
 ) else (
-    echo [1/6] PhysX 5.8 SDK ready.
+    echo [1/6] PhysX 5.8 SDK + isolation bridge ready.
 )
 
 rem CUE4Parse exports LOTL skeletal assets as PSK/PSA. Install and patch the ActorX importer before
@@ -172,7 +177,7 @@ if exist "%PROJECT_DIR%Binaries" rmdir /S /Q "%PROJECT_DIR%Binaries"
 if exist "%PROJECT_DIR%Intermediate" rmdir /S /Q "%PROJECT_DIR%Intermediate"
 if exist "%PROJECT_DIR%.vs" rmdir /S /Q "%PROJECT_DIR%.vs"
 
-echo Building DeadbrickEditor Win64 Development with PhysX 5.8...
+echo Building DeadbrickEditor Win64 Development with isolated PhysX 5.8...
 call "%BUILD_BAT%" DeadbrickEditor Win64 Development -Project="%PROJECT%" -WaitMutex -NoHotReloadFromIDE
 
 if errorlevel 1 (
@@ -215,7 +220,7 @@ if "%HAS_REFERENCE_EXPORT%"=="1" if exist "%REFERENCE_IMPORT_SCRIPT%" if exist "
 echo.
 echo ============================================================
 echo BUILD SUCCEEDED.
-echo PhysX 5.8 voxel backend compiled. Opening fresh DEADBRICK DLL.
+echo PhysX 5.8 voxel backend compiled through isolated bridge. Opening fresh DEADBRICK DLL.
 echo ============================================================
 start "" "%EDITOR_EXE%" "%PROJECT%"
 
