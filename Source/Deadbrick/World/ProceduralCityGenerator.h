@@ -59,6 +59,8 @@ private:
     UPROPERTY(Transient) TArray<TObjectPtr<UStaticMesh>> ReferenceDoorMeshes;
     UPROPERTY(Transient) TArray<TObjectPtr<UStaticMesh>> ReferenceWindowMeshes;
     UPROPERTY(Transient) TArray<TObjectPtr<UStaticMesh>> ReferenceContainerMeshes;
+    UPROPERTY(Transient) TArray<TObjectPtr<UStaticMesh>> ReferenceFurnitureMeshes;
+    UPROPERTY(Transient) TArray<TObjectPtr<UStaticMesh>> ReferenceUtilityMeshes;
 
     EDeadbrickDistrictType PickDistrict(FRandomStream& Stream, int32 BlockX, int32 BlockY) const;
     int32 PickFloors(EDeadbrickDistrictType District, FRandomStream& Stream) const;
@@ -69,5 +71,8 @@ private:
     void BuildShell(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels, EDeadbrickVoxelMaterial WallMaterial, FRandomStream& Stream);
     void BuildInterior(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels, FRandomStream& Stream);
     void BuildVoxelStairwell(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels);
+    void BuildFacadeDetails(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels, FRandomStream& Stream);
+    void BuildRoofDetails(const FIntVector& Min, const FIntVector& Max, FRandomStream& Stream);
+    void SpawnReferenceClutter(const FIntVector& Min, const FIntVector& Max, int32 FloorHeightVoxels, FRandomStream& Stream);
     void SpawnReferenceProp(UStaticMesh* Mesh, const FVector& WorldLocation, const FRotator& Rotation, const FVector& TargetDimensionsCm, EDeadbrickVoxelMaterial BreakMaterial, float Health, EDeadbrickReferencePropRole PropRole);
 };
