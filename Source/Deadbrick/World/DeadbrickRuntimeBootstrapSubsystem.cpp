@@ -1,4 +1,5 @@
 #include "World/DeadbrickRuntimeBootstrapSubsystem.h"
+#include "World/DeadbrickEnvironmentDirector.h"
 #include "World/DestructibleVoxelWorld.h"
 #include "World/ProceduralCityGenerator.h"
 #include "Player/DeadbrickCharacter.h"
@@ -95,6 +96,14 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
     CityGenerator->GenerateCity();
     CityGenerator->ImproveTraversalAndStreetLife();
 
+    // Environment is generated after city geometry so its dressing can use the exact procedural block
+    // spacing. It is an independent actor, so the same atmosphere pass can follow streamed districts later.
+    if (ADeadbrickEnvironmentDirector* Environment = World->SpawnActor<ADeadbrickEnvironmentDirector>(
+        ADeadbrickEnvironmentDirector::StaticClass(), PrototypeOrigin, FRotator::ZeroRotator, SpawnParams))
+    {
+        Environment->InitializeForCity(CityGenerator, VoxelWorld);
+    }
+
     // Keep a guaranteed empty spawn column above the first road intersection. The road cell at Z=0
     // remains intact, while any accidental generated geometry around the capsule/camera is removed.
     const FIntVector SpawnVoxel = VoxelWorld->WorldToVoxel(PrototypeOrigin + FVector(400.0f, 400.0f, 240.0f));
@@ -113,7 +122,7 @@ void UDeadbrickRuntimeBootstrapSubsystem::BuildPrototypeWorld()
         PhysX->SetGroundHeight(PrototypeOrigin.Z + VoxelWorld->VoxelSizeCm);
 
     SpawnPrototypeZombies();
-    ShowStatus(TEXT("Expanded voxel district ready: wider stairs, physical loot containers, mixed buildings and destructible interiors are active."), FColor::Green);
+    ShowStatus(TEXT("Expanded district ready: destructible interiors, scavenging, atmospheric lighting, local haze and instanced street dressing are active."), FColor::Green);
 }
 
 void UDeadbrickRuntimeBootstrapSubsystem::EnsurePlayer()
