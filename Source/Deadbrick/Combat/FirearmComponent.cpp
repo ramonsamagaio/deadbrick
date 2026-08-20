@@ -36,15 +36,13 @@ bool UFirearmComponent::FireFromCamera(const FVector& Origin, const FVector& Dir
     ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
     ObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
     ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+    ObjectParams.AddObjectTypesToQuery(ECC_PhysicsBody);
 
     if (!GetWorld()->LineTraceSingleByObjectType(Hit, Origin, End, ObjectParams, Params)) return true;
 
     if (ADestructibleVoxelWorld* VoxelWorld = Cast<ADestructibleVoxelWorld>(Hit.GetActor()))
     {
         const FVector DamagePoint = Hit.ImpactPoint - Hit.ImpactNormal * 2.0f;
-
-        // Damage is local and immediate. Structural connectivity is queued and budgeted by the voxel
-        // world instead of being traversed synchronously inside the shot that caused the edit.
         VoxelWorld->ApplySphereDamage(DamagePoint, Stats.VoxelDamageRadiusCm, Stats.VoxelDamage);
     }
     else if (AActor* HitActor = Hit.GetActor())
