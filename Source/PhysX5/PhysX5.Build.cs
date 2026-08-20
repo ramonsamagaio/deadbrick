@@ -12,6 +12,8 @@ public class PhysX5 : ModuleRules
         string IncludeDir = Path.Combine(SdkRoot, "include");
         string LibDir = Path.Combine(SdkRoot, "lib", "Win64");
         string BinDir = Path.Combine(SdkRoot, "bin", "Win64");
+        string BridgeIncludeDir = Path.Combine(ProjectRoot, "External", "PhysX5Bridge", "include");
+        string BridgeLibrary = Path.Combine(LibDir, "DeadbrickPhysXBridge.lib");
 
         if (Target.Platform != UnrealTargetPlatform.Win64)
         {
@@ -19,7 +21,7 @@ public class PhysX5 : ModuleRules
             return;
         }
 
-        string[] RequiredLibraries = new string[]
+        string[] RequiredPhysXLibraries = new string[]
         {
             "PhysX_64.lib",
             "PhysXCommon_64.lib",
@@ -34,8 +36,13 @@ public class PhysX5 : ModuleRules
             "PhysXFoundation_64.dll"
         };
 
-        bool bSdkReady = Directory.Exists(IncludeDir) && File.Exists(Path.Combine(IncludeDir, "PxPhysicsAPI.h"));
-        foreach (string Library in RequiredLibraries)
+        bool bSdkReady = Directory.Exists(IncludeDir)
+            && File.Exists(Path.Combine(IncludeDir, "PxPhysicsAPI.h"))
+            && Directory.Exists(BridgeIncludeDir)
+            && File.Exists(Path.Combine(BridgeIncludeDir, "DeadbrickPhysXBridge.h"))
+            && File.Exists(BridgeLibrary);
+
+        foreach (string Library in RequiredPhysXLibraries)
         {
             bSdkReady &= File.Exists(Path.Combine(LibDir, Library));
         }
@@ -51,9 +58,14 @@ public class PhysX5 : ModuleRules
         }
 
         PublicDefinitions.Add("WITH_DEADBRICK_PHYSX5=1");
-        PublicSystemIncludePaths.Add(IncludeDir);
 
-        foreach (string Library in RequiredLibraries)
+        // Never expose NVIDIA PhysX headers to Unreal translation units. UE 5.8's Chaos compatibility
+        // layer still forward-declares physx::PxQuat/PxTransform, which conflicts with PhysX 5.8 typedefs.
+        // DEADBRICK talks to PhysX exclusively through this plain-C isolation bridge.
+        PublicSystemIncludePaths.Add(BridgeIncludeDir);
+        PublicAdditionalLibraries.Add(BridgeLibrary);
+
+        foreach (string Library in RequiredPhysXLibraries)
         {
             PublicAdditionalLibraries.Add(Path.Combine(LibDir, Library));
         }
