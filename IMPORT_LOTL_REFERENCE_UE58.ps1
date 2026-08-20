@@ -1,5 +1,7 @@
 param(
-    [string]$ReferenceRoot = ""
+    [string]$ReferenceRoot = "",
+    [switch]$SkipRebuild,
+    [switch]$NonInteractive
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,7 +21,7 @@ $RetocExe = Join-Path $ToolsDir "retoc.exe"
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host " DEADBRICK - LayOfTheLand reference pipeline (UE 5.8)" -ForegroundColor Cyan
-Write-Host " IoStore -> isolated cooked reference -> GLB/PNG -> Unreal" -ForegroundColor Cyan
+Write-Host " IoStore -> isolated cooked reference -> GLTF/PSK/PSA/PNG -> Unreal" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -76,6 +78,10 @@ if ([string]::IsNullOrWhiteSpace($ReferenceRoot)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ReferenceRoot)) {
+    if ($NonInteractive) {
+        Write-Host "LayOfTheLand was not found in the standard Steam locations." -ForegroundColor Red
+        exit 12
+    }
     $ReferenceRoot = Read-Host "Paste or drag the LayOfTheLand game folder, Content folder, or Paks folder here"
 }
 $ReferenceRoot = $ReferenceRoot.Trim().Trim('"')
@@ -160,7 +166,7 @@ Write-Host ""
 Write-Host "[4/6] Keeping cooked packages OUTSIDE DEADBRICK Content..." -ForegroundColor Cyan
 Write-Host "Cooked game packages are not editor-native source assets." -ForegroundColor Yellow
 Write-Host "They stay isolated in ReferenceExtracted and are never mounted as /Game assets." -ForegroundColor Yellow
-Write-Host "This prevents PACKAGE_FILE_TAG errors and the broken material/texture state from the previous build." -ForegroundColor Yellow
+Write-Host "This prevents PACKAGE_FILE_TAG errors and broken material/texture state." -ForegroundColor Yellow
 
 $MarkerFile = Join-Path $ProjectRoot "Saved\LOTL_REFERENCE_IMPORT.txt"
 New-Item -ItemType Directory -Path (Split-Path -Parent $MarkerFile) -Force | Out-Null
@@ -173,10 +179,10 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $MarkerFile) -Force | Out
     "VisibleCookedUassets: $($Uassets.Count)",
     "InstalledIntoContent: False",
     "Stage: $Stage"
-) | Set-Content $MarkerFile
+) | Set-Content $MarkerFile -Encoding UTF8
 
 Write-Host ""
-Write-Host "[5/6] Generating manifest and exporting editor-safe LOTL meshes/textures..." -ForegroundColor Cyan
+Write-Host "[5/6] Generating manifest and exporting editor-safe LOTL assets..." -ForegroundColor Cyan
 $ManifestScript = Join-Path $ProjectRoot "GENERATE_LOTL_MANIFEST.ps1"
 if (Test-Path $ManifestScript) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File $ManifestScript
@@ -186,15 +192,20 @@ $ExportScript = Join-Path $ProjectRoot "EXPORT_LOTL_EDITOR_ASSETS.ps1"
 if (Test-Path $ExportScript) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File $ExportScript -LegacyPak $LegacyPak
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "LOTL cooked extraction succeeded, but the editor-safe export needs another pass." -ForegroundColor Yellow
-        Write-Host "The game itself can still be rebuilt safely without mounting cooked packages." -ForegroundColor Yellow
+        Write-Host "LOTL cooked extraction succeeded, but some editor-safe export families need another pass." -ForegroundColor Yellow
+        Write-Host "Recovered families remain usable." -ForegroundColor Yellow
     }
 } else {
     Write-Host "EXPORT_LOTL_EDITOR_ASSETS.ps1 not found; skipping editor-safe conversion." -ForegroundColor Yellow
 }
 
 Write-Host ""
-Write-Host "[6/6] Rebuilding DEADBRICK, importing any GLB/PNG exports, and opening Unreal..." -ForegroundColor Cyan
+if ($SkipRebuild) {
+    Write-Host "[6/6] Reference preparation complete. Parent rebuild will compile/import next." -ForegroundColor Green
+    exit 0
+}
+
+Write-Host "[6/6] Rebuilding DEADBRICK, importing GLTF/PSK/PSA/PNG exports, and opening Unreal..." -ForegroundColor Cyan
 $Rebuild = Join-Path $ProjectRoot "REBUILD_AND_OPEN_UE58.bat"
 if (Test-Path $Rebuild) {
     & $Rebuild
