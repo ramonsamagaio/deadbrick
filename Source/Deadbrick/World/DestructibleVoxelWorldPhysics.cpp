@@ -160,10 +160,23 @@ void ADestructibleVoxelWorld::ProcessStructuralQueries()
             const FIntVector Below = Coord + FIntVector(0, 0, -1);
             FDeadbrickVoxel BelowCell;
             const bool bBelowSolid = GetVoxel(Below, BelowCell);
-            if (Coord.Z <= 0 || (bBelowSolid && IsAnchorMaterial(BelowCell.Material)))
+            const bool bTouchesAnchor = Coord.Z <= 0 || (bBelowSolid && IsAnchorMaterial(BelowCell.Material));
+
+            if (bTouchesAnchor)
             {
-                ++Query.GroundSupportCount;
-                Query.bGrounded = true;
+                // A foundation slab is not hundreds of independent columns. Count only anchor contacts
+                // that continue vertically through the slab into an actual wall/pier/column. This is
+                // what makes a mostly destroyed first floor lose load capacity before the last pixel of
+                // contact is gone.
+                FDeadbrickVoxel AboveOne;
+                FDeadbrickVoxel AboveTwo;
+                const bool bVerticalOne = GetVoxel(Coord + FIntVector(0, 0, 1), AboveOne) && IsStructuralMaterial(AboveOne.Material);
+                const bool bVerticalTwo = GetVoxel(Coord + FIntVector(0, 0, 2), AboveTwo) && IsStructuralMaterial(AboveTwo.Material);
+                if (bVerticalOne && bVerticalTwo)
+                {
+                    ++Query.GroundSupportCount;
+                    Query.bGrounded = true;
+                }
             }
 
             for (const FIntVector& Direction : GStructuralDirections)
@@ -190,7 +203,7 @@ void ADestructibleVoxelWorld::ProcessStructuralQueries()
                 UE_LOG(
                     LogTemp,
                     Display,
-                    TEXT("DEADBRICK STRUCTURAL COLLAPSE queued | voxels=%d | supports=%d | capacity=%.0f | gravity-driven"),
+                    TEXT("DEADBRICK STRUCTURAL COLLAPSE queued | voxels=%d | verticalSupports=%d | capacity=%.0f | gravity-driven"),
                     ComponentSize,
                     Query.GroundSupportCount,
                     Capacity);
@@ -328,8 +341,6 @@ void ADestructibleVoxelWorld::ProcessPendingCollapses()
 
         if (Collapse.NextGroupIndex >= Collapse.Groups.Num() && !Collapse.bDetachedFromStatic)
         {
-            // Remove the static shell only after all visible rubble bodies have been prepared. Bodies
-            // are still hidden/non-colliding here, so nothing gets explosively ejected from overlap.
             DetachCellsFromStaticWorld(Collapse.Cells);
             Collapse.bDetachedFromStatic = true;
         }
